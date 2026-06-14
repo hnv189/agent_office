@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agent Playground — Mission Control</title>
+<link rel="stylesheet" href="lib/base.css" />
+<link rel="stylesheet" href="lib/ui.css" />
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#070a14"/>
+    <g fill="#a06bff">
+      <rect x="38" y="34" width="24" height="8"/><rect x="34" y="38" width="32" height="16"/>
+      <rect x="34" y="54" width="6" height="6"/><rect x="46" y="54" width="6" height="6"/><rect x="58" y="54" width="6" height="6"/>
+    </g>
+    <rect x="40" y="42" width="6" height="8" fill="#f4f7ff"/><rect x="54" y="42" width="6" height="8" fill="#f4f7ff"/>
+    <rect x="42" y="44" width="3" height="4" fill="#0a0e1a"/><rect x="56" y="44" width="3" height="4" fill="#0a0e1a"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="lib/tweaks-panel.jsx"></script>
+<script type="text/babel" src="lib/sprites.jsx"></script>
+<script type="text/babel" src="lib/store.jsx"></script>
+<script type="text/babel" src="lib/engine.jsx"></script>
+<script type="text/babel" src="lib/office.jsx"></script>
+<script type="text/babel" src="lib/editor.jsx"></script>
+<script type="text/babel" src="lib/tasks.jsx"></script>
+<script type="text/babel" src="lib/connections.jsx"></script>
+<script type="text/babel" src="lib/app.jsx"></script>
+</body>
+</html>
