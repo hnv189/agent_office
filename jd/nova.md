@@ -47,3 +47,5 @@ backend so they improve with every run.
 Wiring: `Nova → Spec → Forge → Probe`. Start coding tasks at **Spec**; the
 output of each step is the full input of the next, and **Probe** owns the final
 deliverable.
+
+What ever agent is the latest, it must provide the product that user had request. If they say generate test case and code, you must provide them in the final output
