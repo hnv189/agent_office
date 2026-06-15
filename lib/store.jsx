@@ -47,7 +47,9 @@ function defaultState() {
     lastRunMs: opts.lastRunMs ?? Date.now() - 1000 * 60 * 60 * 2,
   });
   // Fixed system prompts for the V-Model coding trio (Spec → Forge → Probe).
-  const LORA_CONN = { provider: 'lora', model: '', baseUrl: 'http://localhost:8000', apiKey: '' };
+  // Default provider is lmstudio so they work immediately; switch to 'lora'
+  // once you have a trained model loaded in the fine-tune backend.
+  const TRIO_CONN = { provider: 'lmstudio', model: 'local-model', baseUrl: 'http://localhost:1234/v1', apiKey: '' };
   const SPEC_PROMPT = 'You are Spec, the requirements analyst in a V-Model coding pipeline. You receive a raw coding task. Output a precise, structured specification only — never code. Include: Goal (one line), Inputs/Outputs, Constraints, Acceptance Criteria (numbered and testable), and Edge Cases. Assume the task description is complete; never ask for clarification. Your output is the single source of truth that the implementer and tester will follow.';
   const FORGE_PROMPT = 'You are Forge, the implementer in a V-Model coding pipeline. You receive a specification from Spec. Output complete, working code that satisfies every acceptance criterion — nothing else. No explanations, no surrounding prose, no placeholders or TODOs. Use idiomatic, production-quality code with the necessary imports and error handling. If the spec names a language, use it; otherwise pick the most fitting one and stay consistent. Your output is the implementation, ready to run.';
   const PROBE_PROMPT = 'You are Probe, the verifier in a V-Model coding pipeline. You receive a specification and the code Forge wrote for it. Check the code against every acceptance criterion and edge case. Output a VERDICT line (PASS or FAIL), then a numbered list of findings (criterion → pass/fail + reason). If anything fails, output a corrected, complete version of the code under a "Corrected implementation" heading. If everything passes, restate the final code as the deliverable. Always produce the actual code, never a description of what to change.';
@@ -70,13 +72,13 @@ function defaultState() {
       // ── V-Model coding pipeline (locked system prompts, served by the LoRA backend) ──
       mk('req',  'Spec',  '#38bdf8', 'requirements', 'research',
         { status: 'ondemand', schedule: 'ondemand', sprite: 'person', locked: true, role2: 'requirements',
-          systemPrompt: SPEC_PROMPT, connection: { ...LORA_CONN }, temperature: 0.3, maxTokens: 4096, tools: [] }),
+          systemPrompt: SPEC_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.3, maxTokens: 4096, tools: [] }),
       mk('code', 'Forge', '#a3e635', 'implementation', 'build',
         { status: 'ondemand', schedule: 'ondemand', sprite: 'robot', locked: true, role2: 'implementation',
-          systemPrompt: FORGE_PROMPT, connection: { ...LORA_CONN }, temperature: 0.2, maxTokens: 4096, tools: ['code.run'] }),
+          systemPrompt: FORGE_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.2, maxTokens: 4096, tools: ['code.run'] }),
       mk('test', 'Probe', '#fb7185', 'verification', 'security',
         { status: 'ondemand', schedule: 'ondemand', sprite: 'cat', locked: true, role2: 'verification',
-          systemPrompt: PROBE_PROMPT, connection: { ...LORA_CONN }, temperature: 0.3, maxTokens: 4096, tools: ['code.run'] }),
+          systemPrompt: PROBE_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.3, maxTokens: 4096, tools: ['code.run'] }),
     ],
     connections: [
       { from: 'nova', to: 'cobalt' },
@@ -117,6 +119,20 @@ const Store = (() => {
     // migrate settings.lora if missing
     if (!state.settings.lora) {
       state = { ...state, settings: { ...state.settings, lora: defaultState().settings.lora } };
+    }
+    // migrate req/code/test: fix provider from 'lora' → 'lmstudio' (pre-training default)
+    // and ensure locked:true is set (added in Phase 2)
+    if (state.agents.some((a) => ['req','code','test'].includes(a.id) && (a.connection?.provider === 'lora' || !a.locked))) {
+      state = { ...state, agents: state.agents.map((a) => {
+        if (!['req','code','test'].includes(a.id)) return a;
+        return {
+          ...a,
+          locked: true,
+          connection: a.connection?.provider === 'lora'
+            ? { ...a.connection, provider: 'lmstudio', baseUrl: 'http://localhost:1234/v1', model: 'local-model' }
+            : a.connection,
+        };
+      }) };
     }
     // migrate V-Model coding trio (req/code/test) + their wiring if missing
     {
@@ -166,6 +182,12 @@ const Store = (() => {
       Store.set({ agents: [...s.agents, a] });
       return id;
     },
+    submitFeedback: (taskId, fb) => Store.set((s) => ({
+      ...s,
+      tasks: s.tasks.map((t) => t.id === taskId
+        ? { ...t, feedback: { ...fb, capturedAt: Date.now() } }
+        : t),
+    })),
     removeAgent: (id) => Store.set((s) => {
       const target = s.agents.find((a) => a.id === id);
       if (target && target.locked) return s; // locked V-Model agents can't be removed

@@ -145,6 +145,66 @@ function PlanCard({ task, agents }) {
   );
 }
 
+function FeedbackForm({ task, chain }) {
+  const [rating, setRating] = React.useState(0);
+  const [hover, setHover] = React.useState(0);
+  const [weakLink, setWeakLink] = React.useState(null);
+  const [notes, setNotes] = React.useState('');
+  const [submitted, setSubmitted] = React.useState(false);
+
+  // Only offer weak-link selection for the V-Model coding trio
+  const trioIds = new Set(['req', 'code', 'test']);
+  const trioAgents = chain.filter((a) => trioIds.has(a.id));
+
+  const submit = () => {
+    if (!rating) return;
+    Store.submitFeedback(task.id, { rating, weakLink, notes: notes.trim() });
+    setSubmitted(true);
+  };
+
+  if (task.feedback) {
+    const fb = task.feedback;
+    const stars = '★'.repeat(fb.rating) + '☆'.repeat(5 - fb.rating);
+    return (
+      <div className="fb-done">
+        <span className="fb-stars-done" style={{ color: fb.rating >= 4 ? '#2ee6a6' : fb.rating >= 3 ? '#ffd23f' : '#ff6b6b' }}>{stars}</span>
+        {fb.weakLink && <span className="fb-weak-done">weak: {fb.weakLink}</span>}
+        {fb.notes && <span className="fb-notes-done">"{fb.notes}"</span>}
+      </div>
+    );
+  }
+
+  if (submitted) return null; // optimistic hide before store update propagates
+
+  return (
+    <div className="fb-form">
+      <div className="fb-hd">How did this run go?</div>
+      <div className="fb-stars">
+        {[1,2,3,4,5].map((n) => (
+          <button key={n} className={'fb-star' + (n <= (hover || rating) ? ' on' : '')}
+            onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(0)}
+            onClick={() => setRating(n)}>★</button>
+        ))}
+      </div>
+      {trioAgents.length > 0 && (
+        <div className="fb-weaklink">
+          <span className="fb-lbl">Weak link:</span>
+          {trioAgents.map((a) => (
+            <button key={a.id} className={'fb-chip' + (weakLink === a.name ? ' sel' : '')}
+              style={{ '--chip-color': a.color }}
+              onClick={() => setWeakLink(weakLink === a.name ? null : a.name)}>
+              {a.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <textarea className="inp ta fb-notes" rows={2} placeholder="What went wrong? (optional — becomes a rule for the agent)"
+        value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <button className="btn primary sm fb-submit" disabled={!rating} onClick={submit}>Submit feedback</button>
+    </div>
+  );
+}
+
 function TaskRow({ task }) {
   const [s] = useStore();
   const [expanded, setExpanded] = React.useState(false);
@@ -212,6 +272,7 @@ function TaskRow({ task }) {
             )}
           </div>
         )}
+        {task.status === 'done' && <FeedbackForm task={task} chain={chain} />}
       </div>
       <div className="task-actions">
         <button className="btn plan-btn sm" disabled={busy} onClick={() => planTask(task.id)}>

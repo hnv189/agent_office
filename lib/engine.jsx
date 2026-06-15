@@ -79,18 +79,25 @@ async function runTask(taskId, opts = {}) {
     Store.updateAgent(id, { status: 'active', action: 'on it!' });
     if (i > 0) triggerVisit(chain[i - 1], id);
     await new Promise((r) => setTimeout(r, 900));
+    const inputPayload = payload; // capture before overwriting for trace
     let out;
     try { out = await callModel(effectiveAgent, payload, { settings: s.settings, liveMode: s.liveMode }); }
     catch (e) { out = '[error] ' + e.message; }
     payload = out;
-    steps.push({ agentId: id, agentName: a.name, agentColor: a.color, output: out });
+    steps.push({
+      agentId: id, agentName: a.name, agentColor: a.color, output: out,
+      // Phase 3 trace — exact triple used; becomes LoRA training data after feedback
+      system: effectiveAgent.systemPrompt || '',
+      user: inputPayload,
+      assistant: out,
+    });
     Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, steps: [...steps] } : t) }));
     Store.log(`${a.name}: ${String(out).slice(0, 70)}`, a.color);
     Store.updateAgent(id, { action: 'done', lastRunMs: Date.now() });
     await new Promise((r) => setTimeout(r, 500));
     Store.updateAgent(id, (ag) => ({ status: ag.schedule === 'always' ? 'active' : (ag.schedule === 'ondemand' ? 'ondemand' : 'idle'), action: ag.schedule === 'always' ? ag.action : '' }));
   }
-  Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, status: 'done', result: payload, steps } : t) }));
+  Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, status: 'done', result: payload, steps, trace: steps } : t) }));
   Store.log(`✔ task "${task.title}" complete`, '#2ee6a6');
 }
 
