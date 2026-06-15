@@ -384,7 +384,19 @@ USER FEEDBACK:
 Rating: ${feedback.rating}/5
 Notes: "${feedback.notes}"${feedback.weakLink ? '\nUser suspects: ' + feedback.weakLink : ''}
 
-Read each agent's JD (responsibilities) and their actual output. Decide which single agent is most responsible for the issue described in the feedback notes. Write one concise, actionable rule — max 20 words — that agent should follow in every future run to prevent this.
+AGENT RESPONSIBILITIES:
+- Spec [req]: Writes the requirements spec — scope, acceptance criteria, constraints, edge cases. Never writes code.
+- Forge [code]: Writes the implementation — code only, no explanation. Follows the spec exactly.
+- Probe [test]: Verifies the implementation against the spec — verdict, findings, corrected code if needed.
+
+DIAGNOSIS INSTRUCTIONS:
+1. Read the feedback notes literally. If the user says "only N items", "too many", "too few", "missing X", "wrong format" — that is a scope/quantity/format issue, not a quality issue.
+2. Match the complaint to the agent whose output caused it:
+   - Spec output wrong/incomplete → agentId: req
+   - Code wrong/broken/too much/too little → agentId: code
+   - Tests wrong/too many/missing/bad format → agentId: test
+3. Write a rule that directly prevents the exact complaint. If the feedback says "generate only 1 test case", the rule must say something like "Generate exactly one test case unless the spec explicitly requests more." Do NOT generalise into an unrelated concern.
+4. The rule must be ≤20 words, imperative, and specific.
 
 Return ONLY this JSON object, nothing else:
 {"agentId":"req","agentName":"Spec","rule":"..."}
