@@ -72,6 +72,7 @@ function defaultState() {
       lmstudio: { baseUrl: 'http://localhost:1234/v1', model: 'local-model' },
       openai:   { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' },
       anthropic:{ baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest', apiKey: '' },
+      lora:     { baseUrl: 'http://localhost:8000', dataset: 'agent_office', modelPath: '', adapterPath: '' },
     },
     ticker: [],
     visits: [], // active room-to-room visits {id, from, to, color, phase}
@@ -87,6 +88,10 @@ const Store = (() => {
     // migrate agents that still have the old 1024 default up to 4096
     if (state.agents.some((a) => a.maxTokens === 1024)) {
       state = { ...state, agents: state.agents.map((a) => a.maxTokens === 1024 ? { ...a, maxTokens: 4096 } : a) };
+    }
+    // migrate settings.lora if missing
+    if (!state.settings.lora) {
+      state = { ...state, settings: { ...state.settings, lora: defaultState().settings.lora } };
     }
   } catch (e) { state = defaultState(); }
   const subs = new Set();
@@ -174,6 +179,36 @@ async function callModel(agent, userContent, { settings, liveMode } = {}) {
       });
       const j = await r.json();
       result = j?.content?.[0]?.text || JSON.stringify(j);
+    } else if (prov === 'lora') {
+      // LoRA fine-tune backend (lora-finetune FastAPI server) — SSE token stream
+      const base = (cfg.baseUrl || 'http://localhost:8000').replace(/\/$/, '');
+      const r = await fetch(base + '/api/chat/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'accept': 'text/event-stream' },
+        body: JSON.stringify({ messages, temperature: agent.temperature, top_p: 0.9, max_new_tokens: Math.min(agent.maxTokens || 512, 2048), enable_thinking: false }),
+      });
+      if (!r.ok) throw new Error(`LoRA backend: ${r.status} ${r.statusText}`);
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', out = '';
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          let ev = '', dat = '';
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) ev = line.slice(7).trim();
+            if (line.startsWith('data: ')) dat = line.slice(6).trim();
+          }
+          if (ev === 'token') { try { out += JSON.parse(dat).t || ''; } catch {} }
+          if (ev === 'done') break outer;
+          if (ev === 'error') { try { throw new Error(JSON.parse(dat).message || 'stream error'); } catch (e2) { throw e2; } }
+        }
+      }
+      result = out || '(empty response)';
     } else {
       // openai-compatible: openai + lmstudio
       const base = conn.baseUrl || cfg.baseUrl || 'http://localhost:1234/v1';

@@ -113,13 +113,19 @@ function EditorDrawer() {
             <option value="lmstudio">LM Studio (local)</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
+            <option value="lora">LoRA (fine-tune)</option>
             <option value="demo">Demo (simulated)</option>
           </select>
         </Field>
-        <Field label="Model">
-          <input className="inp" value={conn.model} onChange={(e) => up({ connection: { ...conn, model: e.target.value } })} />
-        </Field>
+        {conn.provider !== 'lora' && (
+          <Field label="Model">
+            <input className="inp" value={conn.model} onChange={(e) => up({ connection: { ...conn, model: e.target.value } })} />
+          </Field>
+        )}
       </div>
+      {conn.provider === 'lora' && (
+        <p className="note">Model is loaded globally via Settings → LoRA Backend. All agents set to LoRA share the same loaded model.</p>
+      )}
       {(conn.provider === 'lmstudio' || conn.provider === 'openai') && (
         <Field label="Base URL" hint={conn.provider === 'lmstudio' ? 'LM Studio server' : ''}>
           <input className="inp" value={conn.baseUrl || ''} placeholder="http://localhost:1234/v1" onChange={(e) => up({ connection: { ...conn, baseUrl: e.target.value } })} />
@@ -174,6 +180,133 @@ function EditorDrawer() {
   );
 }
 
+function LoraSettings() {
+  const [s] = useStore();
+  const cfg = s.settings.lora || {};
+  const setLora = (patch) => Store.set((st) => ({
+    ...st,
+    settings: { ...st.settings, lora: { ...st.settings.lora, ...patch } },
+  }));
+
+  const [sysOk, setSysOk] = React.useState(null);
+  const [chatSt, setChatSt] = React.useState(null);
+  const [models, setModels] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+
+  const base = (cfg.baseUrl || 'http://localhost:8000').replace(/\/$/, '');
+
+  const probe = React.useCallback(async () => {
+    setSysOk('checking');
+    try {
+      const [sr, cr] = await Promise.all([
+        fetch(base + '/api/system', { signal: AbortSignal.timeout(4000) }),
+        fetch(base + '/api/chat/status', { signal: AbortSignal.timeout(4000) }),
+      ]);
+      setSysOk(sr.ok ? 'ok' : 'fail');
+      setChatSt(cr.ok ? await cr.json() : null);
+    } catch {
+      setSysOk('fail');
+      setChatSt(null);
+    }
+  }, [base]);
+
+  const fetchModels = React.useCallback(async () => {
+    try {
+      const [mr, rr] = await Promise.all([
+        fetch(base + '/api/models'),
+        fetch(base + '/api/runs'),
+      ]);
+      const mods = mr.ok ? await mr.json() : [];
+      const runs = rr.ok ? await rr.json() : [];
+      setModels([
+        ...mods.map((m) => ({ name: m.name, path: m.path })),
+        ...runs.filter((r) => r.kind === 'merged').map((r) => ({
+          name: r.name + ' ✓ merged', path: r.merged_path || r.path,
+        })),
+      ]);
+    } catch {}
+  }, [base]);
+
+  React.useEffect(() => { probe(); fetchModels(); }, [base]);
+
+  const loadModel = async () => {
+    if (!cfg.modelPath) return;
+    setBusy(true);
+    try {
+      await fetch(base + '/api/chat/load', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model_path: cfg.modelPath, adapter_path: cfg.adapterPath || null, use_4bit: true, trust_remote_code: true }),
+      });
+      await probe();
+    } catch {}
+    setBusy(false);
+  };
+
+  const unloadModel = async () => {
+    setBusy(true);
+    try { await fetch(base + '/api/chat/unload', { method: 'POST' }); await probe(); } catch {}
+    setBusy(false);
+  };
+
+  const chatState = chatSt?.state || 'unloaded';
+  const isReady = chatState === 'ready';
+  const isLoading = chatState === 'loading';
+
+  return (
+    <>
+      <div className="sect-l">LoRA Backend</div>
+      <Field label="Server URL">
+        <input className="inp" value={cfg.baseUrl || ''} placeholder="http://localhost:8000"
+          onChange={(e) => setLora({ baseUrl: e.target.value })} />
+      </Field>
+      <Field label="Dataset name" hint="data/<name>/ on server">
+        <input className="inp" value={cfg.dataset || ''} placeholder="agent_office"
+          onChange={(e) => setLora({ dataset: e.target.value })} />
+      </Field>
+
+      <div className="lora-status-row">
+        <div className={`lora-pill ${sysOk || 'idle'}`}>
+          <i />
+          {sysOk === 'checking' ? 'checking…'
+            : sysOk === 'ok' ? 'backend online'
+            : sysOk === 'fail' ? 'not reachable'
+            : 'not checked'}
+        </div>
+        <button className="btn sm ghost" onClick={() => { probe(); fetchModels(); }}>↺ Refresh</button>
+      </div>
+
+      {sysOk === 'ok' && (
+        <>
+          <Field label="Model / merged run">
+            <select className="inp" value={cfg.modelPath || ''}
+              onChange={(e) => setLora({ modelPath: e.target.value })}>
+              <option value="">— pick a model —</option>
+              {models.map((m) => <option key={m.path} value={m.path}>{m.name}</option>)}
+            </select>
+          </Field>
+          <div className="lora-chat-row">
+            <span className={`lora-state-badge ${chatState}`}>{chatState}</span>
+            {chatSt?.model_path && (
+              <span className="lora-loaded-model">{chatSt.model_path.split(/[\\/]/).pop()}</span>
+            )}
+          </div>
+          <div className="lora-load-row">
+            <button className="btn sm" onClick={loadModel}
+              disabled={busy || isLoading || !cfg.modelPath}>
+              {isLoading ? 'Loading…' : '⬆ Load model'}
+            </button>
+            <button className="btn sm ghost" onClick={unloadModel}
+              disabled={busy || !isReady}>
+              ⬇ Unload
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function SettingsDrawer() {
   const [s] = useStore();
   const open = !!s.settingsOpen;
@@ -202,6 +335,8 @@ function SettingsDrawer() {
       <div className="sect-l">Anthropic</div>
       <Field label="API key"><input className="inp" type="password" placeholder="sk-ant-…" value={s.settings.anthropic.apiKey} onChange={(e) => set('anthropic', { apiKey: e.target.value })} /></Field>
       <Field label="Default model"><input className="inp" value={s.settings.anthropic.model} onChange={(e) => set('anthropic', { model: e.target.value })} /></Field>
+
+      <LoraSettings />
     </Drawer>
   );
 }
