@@ -60,6 +60,7 @@ function Sidebar({ view }) {
         <NavItem icon="🎮" label="Agent Office" active={view === 'office'} dot onClick={() => Store.set({ view: 'office' })} />
         <NavItem icon="🎯" label="Tasks" active={view === 'tasks'} onClick={() => Store.set({ view: 'tasks' })} />
         <NavItem icon="🔗" label="Connections" active={view === 'connections'} onClick={() => Store.set({ view: 'connections' })} />
+        <NavItem icon="⟳" label="Self-Improve" active={view === 'learning'} onClick={() => Store.set({ view: 'learning' })} />
         <NavItem icon="⚙" label="Settings" onClick={() => Store.set({ settingsOpen: true })} />
       </nav>
       <div className="side-ft">
@@ -113,6 +114,7 @@ function App() {
           {s.view === 'office' && <OfficeView speed={t.animSpeed} />}
           {s.view === 'tasks' && <TasksView />}
           {s.view === 'connections' && <ConnectionsView graphStyle={t.graphStyle} />}
+          {s.view === 'learning' && <SelfImproveView />}
         </ErrorBoundary>
       </main>
 

@@ -296,3 +296,56 @@ select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xm
 .rule-star{color:#ffd23f;font-size:13px;flex-shrink:0}
 .rule-del{opacity:.4;font-size:12px;flex-shrink:0;padding:2px 4px}
 .rule-del:hover{opacity:1;color:#ff6b6b}
+
+/* ── Self-Improve view (GEPA · training data · LoRA) ─────── */
+.src-gepa{color:#5cc8ff}
+.si-page{display:flex;flex-direction:column;gap:16px}
+.si-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.si-card-hd{display:flex;flex-direction:column;gap:3px}
+.si-card-hd h2{font-size:16px;font-weight:600;margin:0;display:flex;align-items:center;gap:8px}
+.si-sub{font-size:12px;color:var(--muted);line-height:1.5}
+.si-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.fld.inline{flex-direction:row;align-items:center;gap:8px;margin:0}
+.fld.inline .fld-l{white-space:nowrap}
+.si-meta{font-size:12px;font-family:var(--mono);color:var(--muted)}
+.si-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
+.si-empty{color:var(--muted);font-size:13px;padding:14px;border:1px dashed var(--line2);border-radius:10px;margin:0}
+.si-empty.sm{padding:8px 12px;font-size:12px}
+.si-stat-row{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.si-stat{display:flex;flex-direction:column}
+.si-stat b{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--ink)}
+.si-stat span{font-size:11px;color:var(--muted)}
+.si-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.si-push-msg{font-size:12px;font-family:var(--mono)}
+.si-push-msg.ok{color:#2ee6a6}.si-push-msg.fail{color:#ff6b6b}
+.si-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.si-train-state{font-size:11px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.si-train-state.training{color:#a06bff;animation:pulse 1.1s infinite}
+.si-train-state.done{color:#2ee6a6}.si-train-state.error{color:#ff6b6b}
+.si-progress{display:flex;flex-direction:column;gap:5px}
+.si-bar{height:6px;border-radius:4px;background:rgba(255,255,255,.06);overflow:hidden}
+.si-bar i{display:block;height:100%;background:linear-gradient(90deg,#a06bff,#5cc8ff);transition:width .3s}
+.si-prog-txt{font-size:12px;font-family:var(--mono);color:var(--muted)}
+.si-eventlog{max-height:160px;overflow:auto;background:rgba(0,0,0,.25);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.si-event{font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.4}
+.si-merged{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.si-merged-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:7px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid var(--line)}
+.si-merged-name{font-size:12px;font-family:var(--mono);color:var(--ink);display:flex;align-items:center;gap:8px}
+.si-new-badge{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#2ee6a6;
+  border:1px solid rgba(46,230,166,.4);border-radius:6px;padding:1px 5px}
+/* GEPA review */
+.gepa-review{display:flex;flex-direction:column;gap:12px;padding-top:6px;border-top:1px solid var(--line)}
+.gepa-rationale{font-size:13px;color:#5cc8ff;line-height:1.5;margin:0}
+.gepa-cols{display:flex;align-items:flex-start;gap:14px}
+.gepa-col{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.gepa-col-hd{font-size:11px;font-family:var(--mono);letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.gepa-arrow{align-self:center;color:var(--muted);font-size:18px}
+.gepa-old{font-size:12px;line-height:1.5;color:var(--muted);padding:7px 10px;border-radius:8px;
+  background:rgba(255,255,255,.02);border:1px solid var(--line);display:flex;gap:6px}
+.gepa-new-row{display:flex;align-items:flex-start;gap:6px}
+.gepa-new{flex:1;font-size:12px;resize:vertical;margin:0;min-height:46px;
+  border-color:rgba(92,200,255,.35);background:rgba(92,200,255,.05)}
+.gepa-actions{display:flex;gap:8px;flex-wrap:wrap}

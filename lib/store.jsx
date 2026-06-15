@@ -132,7 +132,8 @@ Never output a PASS/FAIL verdict, findings list, or review commentary. The user 
       lmstudio: { baseUrl: 'http://localhost:1234/v1', model: 'local-model' },
       openai:   { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' },
       anthropic:{ baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest', apiKey: '' },
-      lora:     { baseUrl: 'http://localhost:8000', dataset: 'agent_office', modelPath: '', adapterPath: '' },
+      lora:     { baseUrl: 'http://localhost:8000', dataset: 'agent_office', modelPath: '', adapterPath: '',
+                  train: { run_name: '', num_train_epochs: 1, lora_r: 8, lora_alpha: 16, learning_rate: 2e-4, max_seq_length: 512 } },
     },
     ticker: [],
     visits: [], // active room-to-room visits {id, from, to, color, phase}
@@ -152,6 +153,10 @@ const Store = (() => {
     // migrate settings.lora if missing
     if (!state.settings.lora) {
       state = { ...state, settings: { ...state.settings, lora: defaultState().settings.lora } };
+    }
+    // migrate settings.lora.train (added with the Self-Improve view) if missing
+    if (state.settings.lora && !state.settings.lora.train) {
+      state = { ...state, settings: { ...state.settings, lora: { ...state.settings.lora, train: defaultState().settings.lora.train } } };
     }
     // migrate: add rules[] to any agent that doesn't have it
     if (state.agents.some((a) => !Array.isArray(a.rules))) {
@@ -265,6 +270,35 @@ const Store = (() => {
         ? { ...a, rules: (a.rules || []).filter((r) => r.id !== ruleId) }
         : a),
     })),
+    // GEPA — replace an agent's rule set with an evolved one. Confirmed (high-rated)
+    // rules are always preserved (Pareto: never lose a proven rule). Matching texts
+    // keep their id/rating/confirmed; new texts become source 'gepa'.
+    applyGEPA: (agentId, proposedTexts) => {
+      const RULE_CAP = 20;
+      Store.set((s) => ({
+        ...s,
+        agents: s.agents.map((a) => {
+          if (a.id !== agentId) return a;
+          const old = a.rules || [];
+          const byText = new Map(old.map((r) => [r.text.trim(), r]));
+          const evolved = proposedTexts.map((text) => {
+            const t = text.trim();
+            const prev = byText.get(t);
+            return prev || { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), text: t, rating: 3, source: 'gepa', confirmed: false, ts: Date.now() };
+          });
+          // re-add any confirmed rule GEPA dropped
+          for (const r of old) if (r.confirmed && !evolved.some((e) => e.id === r.id)) evolved.push(r);
+          return { ...a, rules: evolved.slice(0, RULE_CAP) };
+        }),
+      }));
+    },
+    markExported: (taskIds) => {
+      const set = new Set(taskIds);
+      Store.set((s) => ({
+        ...s,
+        tasks: s.tasks.map((t) => set.has(t.id) ? { ...t, exported: true } : t),
+      }));
+    },
     removeAgent: (id) => Store.set((s) => {
       const target = s.agents.find((a) => a.id === id);
       if (target && target.locked) return s; // locked V-Model agents can't be removed
@@ -464,4 +498,122 @@ Valid agentId values: req, code, test.`;
   }
 }
 
-Object.assign(window, { useStore, Store, callModel, buildSystemPrompt, analyzeAndAssignRule, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY });
+// ── GEPA + training data (P6+) ─────────────────────────────────────────────
+// The V-Model coding trio whose traces feed learning.
+const TRIO_IDS = ['req', 'code', 'test'];
+
+// Tasks that qualify as training/analysis material: completed, have a trace,
+// have feedback at or above the rating threshold.
+function qualifyingTasks(tasks, { threshold = 3, includeExported = false } = {}) {
+  return (tasks || []).filter((t) =>
+    t.status === 'done' &&
+    Array.isArray(t.trace) && t.trace.length > 0 &&
+    t.feedback && (t.feedback.rating || 0) >= threshold &&
+    (includeExported || !t.exported)
+  );
+}
+
+// Turn qualifying tasks into chat-format training records — ONE per trace step.
+// system = the agent's role prompt actually used (no rule scaffold, so the model
+// learns the behaviour into weights); user = step input; assistant = the produced
+// output, swapped for the user's correctedOutput on the final step when present.
+function buildTrainingRecords(tasks, opts = {}) {
+  const records = [];
+  const usedTaskIds = [];
+  for (const t of qualifyingTasks(tasks, opts)) {
+    const trace = t.trace;
+    const lastIdx = trace.length - 1;
+    let added = false;
+    trace.forEach((step, i) => {
+      const system = (step.system || '').trim();
+      const user = (step.user || '').trim();
+      let assistant = (step.assistant || step.output || '').trim();
+      // user-supplied fix wins for the final deliverable
+      if (i === lastIdx && t.feedback?.correctedOutput) assistant = String(t.feedback.correctedOutput).trim();
+      if (!system || !user || !assistant) return;
+      records.push({ messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+        { role: 'assistant', content: assistant },
+      ], _agentId: step.agentId, _taskId: t.id });
+      added = true;
+    });
+    if (added) usedTaskIds.push(t.id);
+  }
+  return { records, taskIds: usedTaskIds };
+}
+
+// GEPA-style cross-trace analysis: unlike the per-task Nova diagnosis (P5), this
+// reads ALL of one agent's traces + feedback together, finds recurring failure
+// patterns, and proposes an EVOLVED rule set (refine / merge / drop / add).
+// Returns { proposed:[string], rationale, samples } or null.
+async function runGEPA(agentId, { tasks, agents, settings, liveMode } = {}) {
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) return null;
+
+  // gather this agent's steps across every completed, feedback-bearing task
+  const samples = [];
+  for (const t of (tasks || [])) {
+    if (t.status !== 'done' || !Array.isArray(t.trace) || !t.feedback) continue;
+    const step = t.trace.find((s) => s.agentId === agentId);
+    if (!step) continue;
+    samples.push({
+      task: t.title,
+      rating: t.feedback.rating,
+      notes: t.feedback.notes || '',
+      weakLink: t.feedback.weakLink || '',
+      input: String(step.user || '').slice(0, 300),
+      output: String(step.assistant || step.output || '').slice(0, 400),
+    });
+  }
+  if (samples.length < 1) return null;
+
+  const currentRules = (agent.rules || []).map((r, i) => `${i + 1}. ${r.text}${r.confirmed ? ' [PROVEN — keep]' : ''}`).join('\n') || '(none yet)';
+
+  // Demo / offline: no model — return current rules unchanged so the UI still works.
+  if (!liveMode) {
+    return { proposed: (agent.rules || []).map((r) => r.text), rationale: 'Live mode off — GEPA needs a model to evolve rules. Showing current rules unchanged.', samples: samples.length };
+  }
+
+  const nova = agents.find((a) => a.id === 'nova') || agents[0];
+  const sampleBlock = samples.map((s, i) =>
+    `RUN ${i + 1} — rating ${s.rating}/5${s.weakLink ? ` (user flagged: ${s.weakLink})` : ''}\n  Input: ${s.input}\n  ${agent.name} produced: ${s.output}\n  Feedback: ${s.notes || '(none)'}`
+  ).join('\n\n');
+
+  const prompt = `You are GEPA, an offline optimiser for the agent "${agent.name}".
+
+Its fixed role: ${(agent.systemPrompt || '').slice(0, 300)}
+
+CURRENT LEARNED RULES:
+${currentRules}
+
+EXECUTION HISTORY (${samples.length} past runs with user feedback):
+${sampleBlock}
+
+Your job: read the traces to understand WHY runs scored low, not just that they did. Then EVOLVE the rule set:
+- MERGE rules that overlap into one sharper rule.
+- REFINE vague rules into specific, testable ones grounded in the failures above.
+- DROP rules that no run supports or that contradict newer evidence.
+- ADD at most 2 new rules ONLY for a failure pattern that recurs across runs.
+- ALWAYS keep any rule marked [PROVEN — keep].
+- Each rule ≤20 words, imperative, specific. Total ≤12 rules. Prefer fewer, stronger rules.
+
+Return ONLY this JSON, nothing else:
+{"rationale":"one sentence on what you changed and why","rules":["rule 1","rule 2"]}`;
+
+  try {
+    const optimiser = { ...nova, systemPrompt: 'You output only valid JSON. No prose, no markdown fences, just the JSON object.' };
+    const resp = await callModel(optimiser, prompt, { settings, liveMode });
+    let json = null;
+    const fenced = resp.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenced) { try { json = JSON.parse(fenced[1].trim()); } catch {} }
+    if (!json) { const raw = resp.match(/\{[\s\S]*\}/); if (raw) try { json = JSON.parse(raw[0]); } catch {} }
+    if (!json || !Array.isArray(json.rules)) return null;
+    const proposed = json.rules.map((r) => String(r).trim()).filter(Boolean).slice(0, 12);
+    return { proposed, rationale: json.rationale || 'Evolved rule set from execution traces.', samples: samples.length };
+  } catch {
+    return null;
+  }
+}
+
+Object.assign(window, { useStore, Store, callModel, buildSystemPrompt, analyzeAndAssignRule, buildTrainingRecords, runGEPA, qualifyingTasks, TRIO_IDS, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY });

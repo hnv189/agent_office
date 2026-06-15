@@ -117,8 +117,8 @@ function EditorDrawer() {
           <div className="rules-list">
             {agent.rules.map((r) => (
               <div key={r.id} className="rule-row">
-                <span className={'rule-src src-' + r.source} title={r.source === 'nova' ? 'Nova diagnosed' : 'Manual'}>
-                  {r.source === 'nova' ? '◈' : '✎'}
+                <span className={'rule-src src-' + r.source} title={r.source === 'nova' ? 'Nova diagnosed' : r.source === 'gepa' ? 'GEPA evolved' : 'Manual'}>
+                  {r.source === 'nova' ? '◈' : r.source === 'gepa' ? '⟳' : '✎'}
                 </span>
                 <span className="rule-text">{r.text}</span>
                 {r.confirmed && <span className="rule-star" title="High-rated — kept permanently">★</span>}

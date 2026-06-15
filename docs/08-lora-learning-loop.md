@@ -340,17 +340,23 @@ The **exact** assembled `system` and `user` are what Phase 3 records into
 
 ## 10. Phase checklist
 
-- [ ] P0 — Settings + connection pill for lora backend
-- [ ] P1 — `lora` inference provider + load/unload model
-- [ ] P2 — Req/Code/Test agents + default wiring
-- [ ] P3 — per-step trace recorder in `runTask()`
-- [ ] P4 — feedback form + `submitFeedback`
-- [ ] P5 — rules layer (manual; derived optional) + prompt injection
-- [ ] P6 — training-record builder + JSONL download (push optional)
-- [ ] P6.5 — backend `/api/datasets/append` (+ optional `create`)
-- [ ] P7 — Learning view: train trigger + SSE monitor + reload model
+- [x] P0 — Settings + connection pill for lora backend
+- [x] P1 — `lora` inference provider + load/unload model
+- [x] P2 — Req/Code/Test agents + default wiring
+- [x] P3 — per-step trace recorder in `runTask()`
+- [x] P4 — feedback form + `submitFeedback`
+- [x] P5 — rules layer (Nova diagnosis + regenerate) + prompt injection
+- [x] P6 — training-record builder + JSONL download + push (`buildTrainingRecords`, Self-Improve view)
+- [ ] P6.5 — backend `/api/datasets/append` (+ optional `create`) — UI calls it; endpoint still to add server-side
+- [x] P7 — Self-Improve view: train trigger + SSE monitor + reload model
+- [x] GEPA — cross-trace rule evolution (`runGEPA`/`applyGEPA`) — the Hermes-style trace optimiser
 - [ ] P8 — loop orchestration / retrain nudge / hot-swap
 - [ ] P9 — few-shot bank (optional)
+
+> **Hermes mapping (this branch):** Skill files → `agent.rules[]`; trajectory
+> summariser → Nova diagnosis (P5); GEPA trace analysis → `runGEPA` (Self-Improve
+> view, evolves a whole rule set from many traces, distinct from P5's single-task
+> diagnosis); weight fine-tuning → LoRA adapter (P7 train trigger + merge + reload).
 
 ---
 
