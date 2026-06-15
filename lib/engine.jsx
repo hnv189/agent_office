@@ -68,7 +68,7 @@ async function runTask(taskId, opts = {}) {
   if (!task) return;
   const startId = task.assignee || s.agents[0]?.id;
   const chain = pipelineFrom(startId);
-  Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, status: 'running', steps: [] } : t) }));
+  Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, status: 'running', steps: [], trace: [], feedback: null, result: null } : t) }));
   Store.log(`▶ task "${task.title}" → ${chain.map((id) => __agent(id)?.name).join(' → ')}`, '#2ee6a6');
   let payload = task.body || task.title;
   const steps = [];
@@ -80,6 +80,11 @@ async function runTask(taskId, opts = {}) {
     if (i > 0) triggerVisit(chain[i - 1], id);
     await new Promise((r) => setTimeout(r, 900));
     const inputPayload = payload; // capture before overwriting for trace
+    // Surface active learned rules in the ticker so it's clear they're being used
+    const activeRules = effectiveAgent.rules || [];
+    if (activeRules.length > 0) {
+      Store.log(`◈ ${a.name} has ${activeRules.length} learned rule(s) — injecting into prompt`, '#a06bff');
+    }
     let out;
     try { out = await callModel(effectiveAgent, payload, { settings: s.settings, liveMode: s.liveMode }); }
     catch (e) { out = '[error] ' + e.message; }

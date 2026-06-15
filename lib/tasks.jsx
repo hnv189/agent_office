@@ -56,16 +56,20 @@ const TASK_STATUS = { queued: '#6b7693', running: '#ffd23f', done: '#2ee6a6' };
 const RESULT_LIMIT = 240;
 
 function StepOutput({ step }) {
+  const [s] = useStore();
   const [open, setOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(step.output).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
   };
+  const agent = s.agents.find((a) => a.id === step.agentId);
+  const ruleCount = (agent?.rules || []).length;
   return (
     <div className="step-row">
       <button className="step-hd" onClick={() => setOpen((v) => !v)} style={{ '--agent-color': step.agentColor }}>
         <span className="step-dot" />
         <span className="step-name">{step.agentName}</span>
+        {ruleCount > 0 && <span className="step-rules-badge" title={`${ruleCount} learned rule(s) injected`}>◈{ruleCount}</span>}
         <span className="step-preview">{open ? '' : String(step.output).slice(0, 60) + (step.output.length > 60 ? '…' : '')}</span>
         <span className="step-chars">{step.output.length} chars</span>
         <span className="step-chevron">{open ? '▲' : '▼'}</span>
@@ -242,6 +246,7 @@ function TaskRow({ task }) {
       setTimeout(() => setCopied(false), 1500);
     });
   };
+  const isDone = task.status === 'done';
   const busy = task.status === 'running' || task.planStatus === 'planning';
   return (
     <div className="task">
@@ -301,7 +306,9 @@ function TaskRow({ task }) {
         <button className="btn plan-btn sm" disabled={busy} onClick={() => planTask(task.id)}>
           {task.planStatus === 'planning' ? '◈ …' : '◈ plan'}
         </button>
-        <button className="btn primary sm" disabled={busy} onClick={run}>{task.status === 'running' ? 'running…' : '▶ run'}</button>
+        <button className="btn primary sm" disabled={busy} onClick={run}>
+          {task.status === 'running' ? 'running…' : isDone ? '↺ re-run' : '▶ run'}
+        </button>
         <button className="icon-btn" onClick={() => Store.set((st) => ({ ...st, tasks: st.tasks.filter((t) => t.id !== task.id) }))} aria-label="Delete">✕</button>
       </div>
     </div>
