@@ -55,7 +55,9 @@ function EditorDrawer() {
     <Drawer open={!!id} title="Edit Agent" onClose={close}
       footer={(
         <div className="ft-row">
-          <button className="btn ghost danger" onClick={() => { Store.removeAgent(agent.id); close(); }}>Delete</button>
+          {agent.locked
+            ? <span className="lock-pill" title="V-Model agents are kept to preserve the coding pipeline">🔒 V-Model agent</span>
+            : <button className="btn ghost danger" onClick={() => { Store.removeAgent(agent.id); close(); }}>Delete</button>}
           <button className="btn primary" onClick={runNow} disabled={busy} style={{ '--accent': agent.color }}>{busy ? 'Running…' : '▶ Run now'}</button>
         </div>
       )}>
@@ -102,8 +104,11 @@ function EditorDrawer() {
         </Field>
       </div>
 
-      <Field label="System prompt">
-        <textarea className="inp ta" rows={4} value={agent.systemPrompt} onChange={(e) => up({ systemPrompt: e.target.value })} />
+      <Field label="System prompt" hint={agent.locked ? '🔒 locked · V-Model role' : undefined}>
+        <textarea className={'inp ta' + (agent.locked ? ' locked' : '')} rows={4} value={agent.systemPrompt}
+          readOnly={agent.locked} disabled={agent.locked}
+          onChange={(e) => { if (!agent.locked) up({ systemPrompt: e.target.value }); }} />
+        {agent.locked && <p className="lock-note">This agent's role is fixed so the coding pipeline stays consistent. Behaviour improves over time via learned rules and LoRA fine-tuning, not by editing this prompt.</p>}
       </Field>
 
       <div className="sect-l">Model connection</div>

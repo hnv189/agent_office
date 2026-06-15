@@ -21,6 +21,10 @@ const ROOM_THEMES = {
   research: { label: 'RESEARCH LAB',  theme: '#ff5cae' },
   workshop: { label: 'WORKSHOP',      theme: '#ffd23f' },
   studio:   { label: 'STUDIO',        theme: '#ff9b4d' },
+  // V-Model coding pipeline rooms
+  requirements:   { label: 'REQUIREMENTS',   theme: '#38bdf8' },
+  implementation: { label: 'IMPLEMENTATION', theme: '#a3e635' },
+  verification:   { label: 'VERIFICATION',   theme: '#fb7185' },
 };
 
 const TOOL_LIBRARY = ['web.search', 'files.read', 'files.write', 'shell', 'memory', 'vision', 'code.run', 'email'];
@@ -37,15 +41,22 @@ function defaultState() {
     schedule: opts.schedule || 'ondemand',     // always | ondemand | every
     everyHours: opts.everyHours ?? 12,
     tools: opts.tools || [],
+    locked: opts.locked || false,              // locked agents have a fixed system prompt & can't be deleted
+    role2: opts.role2 || null,                 // V-Model phase tag: 'requirements' | 'implementation' | 'verification'
     action: '',
     lastRunMs: opts.lastRunMs ?? Date.now() - 1000 * 60 * 60 * 2,
   });
+  // Fixed system prompts for the V-Model coding trio (Spec → Forge → Probe).
+  const LORA_CONN = { provider: 'lora', model: '', baseUrl: 'http://localhost:8000', apiKey: '' };
+  const SPEC_PROMPT = 'You are Spec, the requirements analyst in a V-Model coding pipeline. You receive a raw coding task. Output a precise, structured specification only — never code. Include: Goal (one line), Inputs/Outputs, Constraints, Acceptance Criteria (numbered and testable), and Edge Cases. Assume the task description is complete; never ask for clarification. Your output is the single source of truth that the implementer and tester will follow.';
+  const FORGE_PROMPT = 'You are Forge, the implementer in a V-Model coding pipeline. You receive a specification from Spec. Output complete, working code that satisfies every acceptance criterion — nothing else. No explanations, no surrounding prose, no placeholders or TODOs. Use idiomatic, production-quality code with the necessary imports and error handling. If the spec names a language, use it; otherwise pick the most fitting one and stay consistent. Your output is the implementation, ready to run.';
+  const PROBE_PROMPT = 'You are Probe, the verifier in a V-Model coding pipeline. You receive a specification and the code Forge wrote for it. Check the code against every acceptance criterion and edge case. Output a VERDICT line (PASS or FAIL), then a numbered list of findings (criterion → pass/fail + reason). If anything fails, output a corrected, complete version of the code under a "Corrected implementation" heading. If everything passes, restate the final code as the deliverable. Always produce the actual code, never a description of what to change.';
   return {
     view: 'office',
     liveMode: false,
     agents: [
       mk('nova',  'Nova',  '#a06bff', 'command', 'command',
-        { status: 'active', schedule: 'always', sprite: 'octo', systemPrompt: 'You are Nova, the dispatcher. Patrol the office, route tasks to the right agent, and keep everyone in sync.', tools: ['memory', 'web.search'] }),
+        { status: 'active', schedule: 'always', sprite: 'octo', systemPrompt: 'You are Nova, the dispatcher. Patrol the office, route tasks to the right agent, and keep everyone in sync. For ANY coding or software task, always route it through the V-Model coding pipeline: Spec (requirements) → Forge (implementation) → Probe (verification). Hand non-coding work to the other specialists.', tools: ['memory', 'web.search'] }),
       mk('cobalt','Cobalt','#4d7cff', 'observatory', 'research',
         { status: 'active', schedule: 'every', everyHours: 21, sprite: 'person', systemPrompt: 'You are Cobalt, the observer. Catalogue incoming signals and summarise what you find.', tools: ['web.search', 'files.read'] }),
       mk('ember', 'Ember', '#ff4d6d', 'security', 'security',
@@ -56,6 +67,16 @@ function defaultState() {
         { status: 'idle', schedule: 'ondemand', sprite: 'car', systemPrompt: 'You are Sol, the builder. Turn plans into working artefacts.', tools: ['code.run', 'shell', 'files.write'] }),
       mk('clay',  'Clay',  '#ff9b4d', 'studio', 'studio',
         { status: 'idle', schedule: 'ondemand', sprite: 'rocket', systemPrompt: 'You are Clay, the maker. Produce visuals and polish the final output.', tools: ['vision', 'files.write'] }),
+      // ── V-Model coding pipeline (locked system prompts, served by the LoRA backend) ──
+      mk('req',  'Spec',  '#38bdf8', 'requirements', 'research',
+        { status: 'ondemand', schedule: 'ondemand', sprite: 'person', locked: true, role2: 'requirements',
+          systemPrompt: SPEC_PROMPT, connection: { ...LORA_CONN }, temperature: 0.3, maxTokens: 4096, tools: [] }),
+      mk('code', 'Forge', '#a3e635', 'implementation', 'build',
+        { status: 'ondemand', schedule: 'ondemand', sprite: 'robot', locked: true, role2: 'implementation',
+          systemPrompt: FORGE_PROMPT, connection: { ...LORA_CONN }, temperature: 0.2, maxTokens: 4096, tools: ['code.run'] }),
+      mk('test', 'Probe', '#fb7185', 'verification', 'security',
+        { status: 'ondemand', schedule: 'ondemand', sprite: 'cat', locked: true, role2: 'verification',
+          systemPrompt: PROBE_PROMPT, connection: { ...LORA_CONN }, temperature: 0.3, maxTokens: 4096, tools: ['code.run'] }),
     ],
     connections: [
       { from: 'nova', to: 'cobalt' },
@@ -63,6 +84,10 @@ function defaultState() {
       { from: 'cobalt', to: 'rosa' },
       { from: 'rosa', to: 'sol' },
       { from: 'sol', to: 'clay' },
+      // V-Model coding pipeline: Nova dispatches → Spec → Forge → Probe
+      { from: 'nova', to: 'req' },
+      { from: 'req', to: 'code' },
+      { from: 'code', to: 'test' },
     ],
     tasks: [
       { id: 't1', kind: 'text', title: 'Summarise weekly signals', body: 'Pull the latest signals and produce a 5-bullet digest.', image: null, status: 'queued', assignee: 'cobalt', createdMs: Date.now() - 36e5 },
@@ -92,6 +117,21 @@ const Store = (() => {
     // migrate settings.lora if missing
     if (!state.settings.lora) {
       state = { ...state, settings: { ...state.settings, lora: defaultState().settings.lora } };
+    }
+    // migrate V-Model coding trio (req/code/test) + their wiring if missing
+    {
+      const def = defaultState();
+      const have = new Set(state.agents.map((a) => a.id));
+      const missing = def.agents.filter((a) => ['req', 'code', 'test'].includes(a.id) && !have.has(a.id));
+      if (missing.length) {
+        const conns = [...state.connections];
+        for (const c of def.connections) {
+          if (['req', 'code', 'test'].includes(c.from) || ['req', 'code', 'test'].includes(c.to)) {
+            if (!conns.some((x) => x.from === c.from && x.to === c.to)) conns.push(c);
+          }
+        }
+        state = { ...state, agents: [...state.agents, ...missing], connections: conns };
+      }
     }
   } catch (e) { state = defaultState(); }
   const subs = new Set();
@@ -126,11 +166,15 @@ const Store = (() => {
       Store.set({ agents: [...s.agents, a] });
       return id;
     },
-    removeAgent: (id) => Store.set((s) => ({
-      ...s,
-      agents: s.agents.filter((a) => a.id !== id),
-      connections: s.connections.filter((c) => c.from !== id && c.to !== id),
-    })),
+    removeAgent: (id) => Store.set((s) => {
+      const target = s.agents.find((a) => a.id === id);
+      if (target && target.locked) return s; // locked V-Model agents can't be removed
+      return {
+        ...s,
+        agents: s.agents.filter((a) => a.id !== id),
+        connections: s.connections.filter((c) => c.from !== id && c.to !== id),
+      };
+    }),
     toggleConnection: (from, to) => Store.set((s) => {
       const exists = s.connections.some((c) => c.from === from && c.to === to);
       return { ...s, connections: exists

@@ -229,3 +229,11 @@ select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xm
 .lora-loaded-model{font-family:var(--mono);font-size:10px;color:var(--muted);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .lora-load-row{display:flex;gap:8px;margin-bottom:4px}
+
+/* ── locked (V-Model) agents ────────────────────────────── */
+.inp.ta.locked{opacity:.7;cursor:not-allowed;background:rgba(255,255,255,.015);
+  border-style:dashed;color:#9aa6c6}
+.lock-note{margin:7px 0 0;font-size:11px;line-height:1.5;color:var(--muted);font-style:italic}
+.lock-pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;
+  letter-spacing:.04em;color:var(--muted);padding:9px 14px;border-radius:10px;
+  border:1px dashed var(--line2);background:rgba(255,255,255,.02)}

@@ -30,3 +30,20 @@ For simple tasks (e.g. "write a function", "summarise this"), 2–3 agents are e
 - **Sol** — implementation, code generation, building
 - **Ember** — review, error-checking, verification
 - **Clay** — final polish, formatting, delivery
+
+## Dedicated Coding Pipeline (always use for code tasks)
+
+For **any coding or software task**, do not improvise a pipeline — route it
+straight through the fixed V-Model coding trio. These three always participate,
+their system prompts are locked, and they are served by the LoRA fine-tune
+backend so they improve with every run.
+
+| Phase | Agent | Receives | Produces |
+|-------|-------|----------|----------|
+| Requirements | **Spec** | the raw coding task | a structured spec (goal, I/O, constraints, numbered acceptance criteria, edge cases) — no code |
+| Implementation | **Forge** | Spec's specification | complete working code, nothing else |
+| Verification | **Probe** | the spec + Forge's code | PASS/FAIL verdict, per-criterion findings, and a corrected implementation if anything fails |
+
+Wiring: `Nova → Spec → Forge → Probe`. Start coding tasks at **Spec**; the
+output of each step is the full input of the next, and **Probe** owns the final
+deliverable.
