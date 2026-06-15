@@ -145,36 +145,58 @@ function PlanCard({ task, agents }) {
   );
 }
 
+function FeedbackSummary({ fb, analyzing, ruleResult }) {
+  const stars = '★'.repeat(fb.rating) + '☆'.repeat(5 - fb.rating);
+  const col = fb.rating >= 4 ? '#2ee6a6' : fb.rating >= 3 ? '#ffd23f' : '#ff6b6b';
+  return (
+    <div className="fb-done">
+      <span className="fb-stars-done" style={{ color: col }}>{stars}</span>
+      {fb.weakLink && <span className="fb-weak-done">hint: {fb.weakLink}</span>}
+      {fb.notes && <span className="fb-notes-done">"{fb.notes}"</span>}
+      {analyzing && <span className="fb-nova-analyzing">◈ Nova analyzing…</span>}
+      {ruleResult && (
+        <span className="fb-rule-assigned" title={ruleResult.rule}>
+          ◈ Rule → <b>{ruleResult.agentName}</b>: "{ruleResult.rule}"
+        </span>
+      )}
+    </div>
+  );
+}
+
 function FeedbackForm({ task, chain }) {
+  const [s] = useStore();
   const [rating, setRating] = React.useState(0);
   const [hover, setHover] = React.useState(0);
   const [weakLink, setWeakLink] = React.useState(null);
   const [notes, setNotes] = React.useState('');
-  const [submitted, setSubmitted] = React.useState(false);
+  // 'idle' | 'analyzing' | 'done'
+  const [phase, setPhase] = React.useState('idle');
+  const [ruleResult, setRuleResult] = React.useState(null);
 
-  // Only offer weak-link selection for the V-Model coding trio
   const trioIds = new Set(['req', 'code', 'test']);
   const trioAgents = chain.filter((a) => trioIds.has(a.id));
 
-  const submit = () => {
+  const submit = async () => {
     if (!rating) return;
-    Store.submitFeedback(task.id, { rating, weakLink, notes: notes.trim() });
-    setSubmitted(true);
+    const fb = { rating, weakLink, notes: notes.trim() };
+    Store.submitFeedback(task.id, fb);
+    // If there are notes and the trio ran, let Nova diagnose
+    if (trioAgents.length > 0 && fb.notes) {
+      setPhase('analyzing');
+      const result = await analyzeAndAssignRule(task, fb, s.agents, s.settings, s.liveMode);
+      setRuleResult(result || null);
+    }
+    setPhase('done');
   };
 
-  if (task.feedback) {
-    const fb = task.feedback;
-    const stars = '★'.repeat(fb.rating) + '☆'.repeat(5 - fb.rating);
-    return (
-      <div className="fb-done">
-        <span className="fb-stars-done" style={{ color: fb.rating >= 4 ? '#2ee6a6' : fb.rating >= 3 ? '#ffd23f' : '#ff6b6b' }}>{stars}</span>
-        {fb.weakLink && <span className="fb-weak-done">weak: {fb.weakLink}</span>}
-        {fb.notes && <span className="fb-notes-done">"{fb.notes}"</span>}
-      </div>
-    );
+  // Already has persisted feedback (page reload after submission)
+  if (task.feedback && phase === 'idle') {
+    return <FeedbackSummary fb={task.feedback} analyzing={false} ruleResult={null} />;
   }
-
-  if (submitted) return null; // optimistic hide before store update propagates
+  // Mid/post-submission states
+  if (phase === 'analyzing' || phase === 'done') {
+    return <FeedbackSummary fb={task.feedback} analyzing={phase === 'analyzing'} ruleResult={ruleResult} />;
+  }
 
   return (
     <div className="fb-form">
@@ -188,7 +210,7 @@ function FeedbackForm({ task, chain }) {
       </div>
       {trioAgents.length > 0 && (
         <div className="fb-weaklink">
-          <span className="fb-lbl">Weak link:</span>
+          <span className="fb-lbl">Hint for Nova:</span>
           {trioAgents.map((a) => (
             <button key={a.id} className={'fb-chip' + (weakLink === a.name ? ' sel' : '')}
               style={{ '--chip-color': a.color }}
@@ -198,7 +220,8 @@ function FeedbackForm({ task, chain }) {
           ))}
         </div>
       )}
-      <textarea className="inp ta fb-notes" rows={2} placeholder="What went wrong? (optional — becomes a rule for the agent)"
+      <textarea className="inp ta fb-notes" rows={2}
+        placeholder="What went wrong? Nova will read this, diagnose the agent, and assign a rule."
         value={notes} onChange={(e) => setNotes(e.target.value)} />
       <button className="btn primary sm fb-submit" disabled={!rating} onClick={submit}>Submit feedback</button>
     </div>

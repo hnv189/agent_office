@@ -111,6 +111,24 @@ function EditorDrawer() {
         {agent.locked && <p className="lock-note">This agent's role is fixed so the coding pipeline stays consistent. Behaviour improves over time via learned rules and LoRA fine-tuning, not by editing this prompt.</p>}
       </Field>
 
+      {(agent.rules || []).length > 0 && (
+        <>
+          <div className="sect-l">Learned rules <span className="rules-count">({agent.rules.length} / 20)</span></div>
+          <div className="rules-list">
+            {agent.rules.map((r) => (
+              <div key={r.id} className="rule-row">
+                <span className={'rule-src src-' + r.source} title={r.source === 'nova' ? 'Nova diagnosed' : 'Manual'}>
+                  {r.source === 'nova' ? '◈' : '✎'}
+                </span>
+                <span className="rule-text">{r.text}</span>
+                {r.confirmed && <span className="rule-star" title="High-rated — kept permanently">★</span>}
+                <button className="icon-btn rule-del" onClick={() => Store.removeRule(agent.id, r.id)} title="Remove rule">✕</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       <div className="sect-l">Model connection</div>
       <div className="grid2">
         <Field label="Provider">

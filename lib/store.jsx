@@ -38,11 +38,12 @@ function defaultState() {
     connection: opts.connection || { provider: 'lmstudio', model: 'local-model', baseUrl: 'http://localhost:1234/v1', apiKey: '' },
     temperature: opts.temperature ?? 0.7,
     maxTokens: opts.maxTokens ?? 4096,
-    schedule: opts.schedule || 'ondemand',     // always | ondemand | every
+    schedule: opts.schedule || 'ondemand',
     everyHours: opts.everyHours ?? 12,
     tools: opts.tools || [],
-    locked: opts.locked || false,              // locked agents have a fixed system prompt & can't be deleted
-    role2: opts.role2 || null,                 // V-Model phase tag: 'requirements' | 'implementation' | 'verification'
+    locked: opts.locked || false,
+    role2: opts.role2 || null,
+    rules: [],   // [{ id, text, rating, source:'nova'|'manual', confirmed, ts }]
     action: '',
     lastRunMs: opts.lastRunMs ?? Date.now() - 1000 * 60 * 60 * 2,
   });
@@ -120,6 +121,10 @@ const Store = (() => {
     if (!state.settings.lora) {
       state = { ...state, settings: { ...state.settings, lora: defaultState().settings.lora } };
     }
+    // migrate: add rules[] to any agent that doesn't have it
+    if (state.agents.some((a) => !Array.isArray(a.rules))) {
+      state = { ...state, agents: state.agents.map((a) => Array.isArray(a.rules) ? a : { ...a, rules: [] }) };
+    }
     // migrate req/code/test: fix provider from 'lora' → 'lmstudio' (pre-training default)
     // and ensure locked:true is set (added in Phase 2)
     if (state.agents.some((a) => ['req','code','test'].includes(a.id) && (a.connection?.provider === 'lora' || !a.locked))) {
@@ -188,6 +193,31 @@ const Store = (() => {
         ? { ...t, feedback: { ...fb, capturedAt: Date.now() } }
         : t),
     })),
+    addRule: (agentId, text, rating, source = 'manual') => {
+      const RULE_CAP = 20;
+      Store.set((s) => ({
+        ...s,
+        agents: s.agents.map((a) => {
+          if (a.id !== agentId) return a;
+          const confirmed = rating >= 4;
+          const newRule = { id: Date.now().toString(36), text, rating, source, confirmed, ts: Date.now() };
+          let rules = [...(a.rules || []), newRule];
+          if (rules.length > RULE_CAP) {
+            const kept = rules.filter((r) => r.confirmed);
+            const evictable = rules.filter((r) => !r.confirmed);
+            while (kept.length + evictable.length > RULE_CAP) evictable.shift();
+            rules = [...kept, ...evictable].sort((x, y) => x.ts - y.ts);
+          }
+          return { ...a, rules };
+        }),
+      }));
+    },
+    removeRule: (agentId, ruleId) => Store.set((s) => ({
+      ...s,
+      agents: s.agents.map((a) => a.id === agentId
+        ? { ...a, rules: (a.rules || []).filter((r) => r.id !== ruleId) }
+        : a),
+    })),
     removeAgent: (id) => Store.set((s) => {
       const target = s.agents.find((a) => a.id === id);
       if (target && target.locked) return s; // locked V-Model agents can't be removed
@@ -223,12 +253,22 @@ function useStore(selector) {
 }
 
 // ── model-call layer ───────────────────────────────────────────────────────
+function buildSystemPrompt(agent) {
+  const rules = agent.rules || [];
+  if (!rules.length) return agent.systemPrompt || '';
+  const block = '--- LEARNED RULES (from past feedback) ---\n'
+    + rules.map((r, i) => `${i + 1}. ${r.text}`).join('\n')
+    + '\n------------------------------------------\n\n';
+  return block + (agent.systemPrompt || '');
+}
+
 async function callModel(agent, userContent, { settings, liveMode } = {}) {
   const conn = agent.connection || {};
   const prov = conn.provider || 'lmstudio';
   const cfg = (settings && settings[prov]) || {};
+  const systemContent = buildSystemPrompt(agent);
   const messages = [
-    { role: 'system', content: agent.systemPrompt || '' },
+    { role: 'system', content: systemContent },
     { role: 'user', content: userContent },
   ];
   if (!liveMode || prov === 'demo') return simulate(agent, userContent);
@@ -241,7 +281,7 @@ async function callModel(agent, userContent, { settings, liveMode } = {}) {
       const r = await fetch((cfg.baseUrl || 'https://api.anthropic.com') + '/v1/messages', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey || '', 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: conn.model || cfg.model, max_tokens: agent.maxTokens, temperature: agent.temperature, system: agent.systemPrompt, messages: [{ role: 'user', content: userContent }] }),
+        body: JSON.stringify({ model: conn.model || cfg.model, max_tokens: agent.maxTokens, temperature: agent.temperature, system: systemContent, messages: [{ role: 'user', content: userContent }] }),
       });
       const j = await r.json();
       result = j?.content?.[0]?.text || JSON.stringify(j);
@@ -301,4 +341,70 @@ function simulate(agent, userContent) {
   return `${agent.name} (${verb}): processed "${snippet}${snippet.length >= 60 ? '…' : ''}". Done.`;
 }
 
-Object.assign(window, { useStore, Store, callModel, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY });
+// Nova diagnoses which V-Model agent caused an issue and assigns a rule to it.
+// Called after the user submits feedback with notes. Uses Nova's live model;
+// falls back to manual assignment (chip + notes) in Demo mode.
+async function analyzeAndAssignRule(task, feedback, agents, settings, liveMode) {
+  const TRIO = { req: 'Spec', code: 'Forge', test: 'Probe' };
+  const trace = task.trace || task.steps || [];
+  const trioAgents = agents.filter((a) => TRIO[a.id]);
+  if (!trioAgents.length || !feedback.notes) return null;
+
+  // Demo mode: if user picked a chip and left notes, use as a manual rule
+  if (!liveMode) {
+    if (feedback.weakLink) {
+      const match = trioAgents.find((a) => a.name === feedback.weakLink);
+      if (match) {
+        const text = feedback.notes.slice(0, 80);
+        Store.addRule(match.id, text, feedback.rating, 'manual');
+        return { agentId: match.id, agentName: match.name, rule: text };
+      }
+    }
+    return null;
+  }
+
+  // Live mode: let Nova read each agent's JD + output and diagnose
+  const nova = agents.find((a) => a.id === 'nova') || agents[0];
+
+  const agentContext = trioAgents.map((a) => {
+    const step = trace.find((s) => s.agentId === a.id);
+    const jd = (a.systemPrompt || '').slice(0, 250);
+    const out = step ? String(step.assistant || step.output || '').slice(0, 350) : '(no output recorded)';
+    return `${a.name} [${a.id}]\n  JD: ${jd}…\n  Output: ${out}`;
+  }).join('\n\n');
+
+  const prompt = `You are Nova, the project manager. A V-Model coding pipeline finished and the user flagged an issue.
+
+TASK: "${task.title}"${task.body ? '\n' + task.body : ''}
+
+PIPELINE OUTPUTS (what each agent actually produced):
+${agentContext}
+
+USER FEEDBACK:
+Rating: ${feedback.rating}/5
+Notes: "${feedback.notes}"${feedback.weakLink ? '\nUser suspects: ' + feedback.weakLink : ''}
+
+Read each agent's JD (responsibilities) and their actual output. Decide which single agent is most responsible for the issue described in the feedback notes. Write one concise, actionable rule — max 20 words — that agent should follow in every future run to prevent this.
+
+Return ONLY this JSON object, nothing else:
+{"agentId":"req","agentName":"Spec","rule":"..."}
+
+Valid agentId values: req, code, test.`;
+
+  try {
+    const analyzer = { ...nova, systemPrompt: 'You output only valid JSON. No prose, no markdown fences, just the JSON object.' };
+    const resp = await callModel(analyzer, prompt, { settings, liveMode });
+    // extract JSON from response
+    let json = null;
+    const fenced = resp.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenced) { try { json = JSON.parse(fenced[1].trim()); } catch {} }
+    if (!json) { const raw = resp.match(/\{[\s\S]*\}/); if (raw) try { json = JSON.parse(raw[0]); } catch {} }
+    if (!json || !json.agentId || !json.rule || !TRIO[json.agentId]) return null;
+    Store.addRule(json.agentId, json.rule, feedback.rating, 'nova');
+    return { agentId: json.agentId, agentName: json.agentName || TRIO[json.agentId], rule: json.rule };
+  } catch {
+    return null;
+  }
+}
+
+Object.assign(window, { useStore, Store, callModel, buildSystemPrompt, analyzeAndAssignRule, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY });
