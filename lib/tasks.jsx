@@ -149,7 +149,7 @@ function PlanCard({ task, agents }) {
   );
 }
 
-function FeedbackSummary({ fb, analyzing, ruleResult }) {
+function FeedbackSummary({ fb }) {
   const stars = '★'.repeat(fb.rating) + '☆'.repeat(5 - fb.rating);
   const col = fb.rating >= 4 ? '#2ee6a6' : fb.rating >= 3 ? '#ffd23f' : '#ff6b6b';
   return (
@@ -157,10 +157,9 @@ function FeedbackSummary({ fb, analyzing, ruleResult }) {
       <span className="fb-stars-done" style={{ color: col }}>{stars}</span>
       {fb.weakLink && <span className="fb-weak-done">hint: {fb.weakLink}</span>}
       {fb.notes && <span className="fb-notes-done">"{fb.notes}"</span>}
-      {analyzing && <span className="fb-nova-analyzing">◈ Nova analyzing…</span>}
-      {ruleResult && (
-        <span className="fb-rule-assigned" title={ruleResult.rule}>
-          ◈ Rule → <b>{ruleResult.agentName}</b>: "{ruleResult.rule}"
+      {fb.appliedRule && (
+        <span className="fb-rule-assigned">
+          ◈ Rule → <b>{fb.appliedRule.agentName}</b>: "{fb.appliedRule.rule}"
         </span>
       )}
     </div>
@@ -169,39 +168,94 @@ function FeedbackSummary({ fb, analyzing, ruleResult }) {
 
 function FeedbackForm({ task, chain }) {
   const [s] = useStore();
+  const TRIO = { req: 'Spec', code: 'Forge', test: 'Probe' };
+  const trioIds = new Set(['req', 'code', 'test']);
+  const trioAgents = chain.filter((a) => trioIds.has(a.id));
+
+  // phases: 'idle' | 'analyzing' | 'proposal' | 'done'
+  const [phase, setPhase] = React.useState('idle');
   const [rating, setRating] = React.useState(0);
   const [hover, setHover] = React.useState(0);
   const [weakLink, setWeakLink] = React.useState(null);
   const [notes, setNotes] = React.useState('');
-  // 'idle' | 'analyzing' | 'done'
-  const [phase, setPhase] = React.useState('idle');
-  const [ruleResult, setRuleResult] = React.useState(null);
+  // proposal from Nova — user edits before confirming
+  const [propAgentId, setPropAgentId] = React.useState(null);
+  const [propRule, setPropRule] = React.useState('');
 
-  const trioIds = new Set(['req', 'code', 'test']);
-  const trioAgents = chain.filter((a) => trioIds.has(a.id));
+  const savedFb = task.feedback;
 
   const submit = async () => {
     if (!rating) return;
     const fb = { rating, weakLink, notes: notes.trim() };
     Store.submitFeedback(task.id, fb);
-    // If there are notes and the trio ran, let Nova diagnose
     if (trioAgents.length > 0 && fb.notes) {
       setPhase('analyzing');
       const result = await analyzeAndAssignRule(task, fb, s.agents, s.settings, s.liveMode);
-      setRuleResult(result || null);
+      if (result) {
+        setPropAgentId(result.agentId);
+        setPropRule(result.rule);
+        setPhase('proposal');
+        return;
+      }
     }
     setPhase('done');
   };
 
-  // Already has persisted feedback (page reload after submission)
-  if (task.feedback && phase === 'idle') {
-    return <FeedbackSummary fb={task.feedback} analyzing={false} ruleResult={null} />;
-  }
-  // Mid/post-submission states
-  if (phase === 'analyzing' || phase === 'done') {
-    return <FeedbackSummary fb={task.feedback} analyzing={phase === 'analyzing'} ruleResult={ruleResult} />;
+  const applyRule = () => {
+    if (!propAgentId || !propRule.trim()) return;
+    const agentName = s.agents.find((a) => a.id === propAgentId)?.name || TRIO[propAgentId];
+    Store.addRule(propAgentId, propRule.trim(), rating, 'nova');
+    // persist applied rule info onto the task feedback for the summary
+    Store.submitFeedback(task.id, { ...savedFb, appliedRule: { agentId: propAgentId, agentName, rule: propRule.trim() } });
+    setPhase('done');
+  };
+
+  const dismissRule = () => setPhase('done');
+
+  // Reloaded page — feedback already saved, show summary
+  if (savedFb && phase === 'idle') return <FeedbackSummary fb={savedFb} />;
+
+  // Post-submit summary
+  if (phase === 'done') return savedFb ? <FeedbackSummary fb={savedFb} /> : null;
+
+  // Nova analyzing
+  if (phase === 'analyzing') {
+    return (
+      <div className="fb-done">
+        <span className="fb-nova-analyzing">◈ Nova analyzing pipeline outputs…</span>
+      </div>
+    );
   }
 
+  // Proposal — user reviews / edits before saving
+  if (phase === 'proposal') {
+    return (
+      <div className="fb-proposal">
+        <div className="fb-prop-hd">
+          <span className="fb-prop-label">◈ Nova's diagnosis — review before applying</span>
+        </div>
+        <div className="fb-prop-agent-row">
+          <span className="fb-lbl">Assign to:</span>
+          {trioAgents.map((a) => (
+            <button key={a.id}
+              className={'fb-chip' + (propAgentId === a.id ? ' sel' : '')}
+              style={{ '--chip-color': a.color }}
+              onClick={() => setPropAgentId(a.id)}>
+              {a.name}
+            </button>
+          ))}
+        </div>
+        <textarea className="inp ta fb-prop-rule" rows={2}
+          value={propRule} onChange={(e) => setPropRule(e.target.value)} />
+        <div className="fb-prop-actions">
+          <button className="btn primary sm" onClick={applyRule} disabled={!propAgentId || !propRule.trim()}>✓ Apply rule</button>
+          <button className="btn sm ghost" onClick={dismissRule}>✕ Dismiss</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Idle — rating form
   return (
     <div className="fb-form">
       <div className="fb-hd">How did this run go?</div>
@@ -225,7 +279,7 @@ function FeedbackForm({ task, chain }) {
         </div>
       )}
       <textarea className="inp ta fb-notes" rows={2}
-        placeholder="What went wrong? Nova will read this, diagnose the agent, and assign a rule."
+        placeholder="What went wrong? Nova will read this, diagnose the agent, and propose a rule for your review."
         value={notes} onChange={(e) => setNotes(e.target.value)} />
       <button className="btn primary sm fb-submit" disabled={!rating} onClick={submit}>Submit feedback</button>
     </div>

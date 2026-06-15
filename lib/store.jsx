@@ -350,14 +350,12 @@ async function analyzeAndAssignRule(task, feedback, agents, settings, liveMode) 
   const trioAgents = agents.filter((a) => TRIO[a.id]);
   if (!trioAgents.length || !feedback.notes) return null;
 
-  // Demo mode: if user picked a chip and left notes, use as a manual rule
+  // Demo mode: if user picked a chip and left notes, propose as a manual rule (no auto-save)
   if (!liveMode) {
     if (feedback.weakLink) {
       const match = trioAgents.find((a) => a.name === feedback.weakLink);
       if (match) {
-        const text = feedback.notes.slice(0, 80);
-        Store.addRule(match.id, text, feedback.rating, 'manual');
-        return { agentId: match.id, agentName: match.name, rule: text };
+        return { agentId: match.id, agentName: match.name, rule: feedback.notes.slice(0, 80) };
       }
     }
     return null;
@@ -412,7 +410,7 @@ Valid agentId values: req, code, test.`;
     if (fenced) { try { json = JSON.parse(fenced[1].trim()); } catch {} }
     if (!json) { const raw = resp.match(/\{[\s\S]*\}/); if (raw) try { json = JSON.parse(raw[0]); } catch {} }
     if (!json || !json.agentId || !json.rule || !TRIO[json.agentId]) return null;
-    Store.addRule(json.agentId, json.rule, feedback.rating, 'nova');
+    // Return proposal only — caller confirms before saving
     return { agentId: json.agentId, agentName: json.agentName || TRIO[json.agentId], rule: json.rule };
   } catch {
     return null;
