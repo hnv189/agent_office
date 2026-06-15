@@ -205,12 +205,23 @@ function FeedbackForm({ task, chain }) {
     if (!propAgentId || !propRule.trim()) return;
     const agentName = s.agents.find((a) => a.id === propAgentId)?.name || TRIO[propAgentId];
     Store.addRule(propAgentId, propRule.trim(), rating, 'nova');
-    // persist applied rule info onto the task feedback for the summary
     Store.submitFeedback(task.id, { ...savedFb, appliedRule: { agentId: propAgentId, agentName, rule: propRule.trim() } });
     setPhase('done');
   };
 
   const dismissRule = () => setPhase('done');
+
+  const regenerate = async () => {
+    setPhase('analyzing');
+    const fb = task.feedback;
+    if (!fb) { setPhase('proposal'); return; }
+    const result = await analyzeAndAssignRule(task, fb, s.agents, s.settings, s.liveMode);
+    if (result) {
+      setPropAgentId(result.agentId);
+      setPropRule(result.rule);
+    }
+    setPhase('proposal');
+  };
 
   // Reloaded page — feedback already saved, show summary
   if (savedFb && phase === 'idle') return <FeedbackSummary fb={savedFb} />;
@@ -249,6 +260,7 @@ function FeedbackForm({ task, chain }) {
           value={propRule} onChange={(e) => setPropRule(e.target.value)} />
         <div className="fb-prop-actions">
           <button className="btn primary sm" onClick={applyRule} disabled={!propAgentId || !propRule.trim()}>✓ Apply rule</button>
+          <button className="btn sm" onClick={regenerate}>↺ Regenerate</button>
           <button className="btn sm ghost" onClick={dismissRule}>✕ Dismiss</button>
         </div>
       </div>

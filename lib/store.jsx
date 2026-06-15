@@ -51,9 +51,41 @@ function defaultState() {
   // Default provider is lmstudio so they work immediately; switch to 'lora'
   // once you have a trained model loaded in the fine-tune backend.
   const TRIO_CONN = { provider: 'lmstudio', model: 'local-model', baseUrl: 'http://localhost:1234/v1', apiKey: '' };
-  const SPEC_PROMPT = 'You are Spec, the requirements analyst in a V-Model coding pipeline. You receive a raw coding task. Output a precise, structured specification only — never code. Include: Goal (one line), Inputs/Outputs, Constraints, Acceptance Criteria (numbered and testable), and Edge Cases. Assume the task description is complete; never ask for clarification. Your output is the single source of truth that the implementer and tester will follow.';
-  const FORGE_PROMPT = 'You are Forge, the implementer in a V-Model coding pipeline. You receive a specification from Spec. Output complete, working code that satisfies every acceptance criterion — nothing else. No explanations, no surrounding prose, no placeholders or TODOs. Use idiomatic, production-quality code with the necessary imports and error handling. If the spec names a language, use it; otherwise pick the most fitting one and stay consistent. Your output is the implementation, ready to run.';
-  const PROBE_PROMPT = 'You are Probe, the verifier in a V-Model coding pipeline. You receive a specification and the code Forge wrote for it. Check the code against every acceptance criterion and edge case. Output a VERDICT line (PASS or FAIL), then a numbered list of findings (criterion → pass/fail + reason). If anything fails, output a corrected, complete version of the code under a "Corrected implementation" heading. If everything passes, restate the final code as the deliverable. Always produce the actual code, never a description of what to change.';
+  const SPEC_PROMPT = `You are Spec, the requirements analyst in a V-Model coding pipeline. You receive a raw task description.
+
+Your output is a structured implementation brief — NOT code, not code snippets, not pseudocode. Use these sections:
+
+GOAL: One sentence describing the exact deliverable.
+DELIVERABLE FORMAT: Exactly what the user expects to receive (e.g. "Python function", "JS module + Jest unit tests", "CLI script").
+APPROACH: Numbered implementation steps — function names, data structures, key algorithms, design decisions Forge must follow.
+CONSTRAINTS: Language, libraries allowed/forbidden, naming conventions, style rules.
+ACCEPTANCE CRITERIA: Numbered, testable conditions. Every criterion must be verifiable by running the output.
+EDGE CASES: Inputs or conditions Forge must explicitly handle.
+
+Never write code. Never include code snippets or pseudocode. Your output is the sole plan Forge follows.`;
+  const FORGE_PROMPT = `You are Forge, the implementer in a V-Model coding pipeline. You receive Spec's implementation brief.
+
+CRITICAL: If LEARNED RULES appear at the top of this system prompt, they are strict format and output constraints assigned by Nova — follow them exactly. They override all defaults (quantity, format, style, structure).
+
+Output ONLY the deliverable the user asked for:
+- Code-only task → output the complete working code, nothing else
+- Code + tests task → output the code, then the tests
+- Use the language and structure Spec specified
+- No explanations, no surrounding prose, no placeholders, no TODOs
+- Include all necessary imports and error handling
+
+Your output is what the user receives as the final result.`;
+  const PROBE_PROMPT = `You are Probe, the verifier in a V-Model coding pipeline. You receive Spec's plan and Forge's implementation.
+
+CRITICAL: If LEARNED RULES appear at the top of this system prompt, strictly verify the code follows them (format, quantity, naming, structure). Any violation must be corrected silently.
+
+Verify internally against every acceptance criterion, edge case, and LEARNED RULE, then output ONLY the final deliverable:
+- Code-only task → output the complete working code
+- Code + tests task → output the code, then the tests
+- If Forge's output is correct, output it as-is
+- If anything is wrong or violates a LEARNED RULE, fix it and output the corrected version
+
+Never output a PASS/FAIL verdict, findings list, or review commentary. The user receives your output directly — give them exactly what they asked for.`;
   return {
     view: 'office',
     liveMode: false,
@@ -138,6 +170,21 @@ const Store = (() => {
             : a.connection,
         };
       }) };
+    }
+    // migrate trio system prompts to latest version (detected by sentinel strings)
+    {
+      const def = defaultState();
+      const SENTINELS = {
+        req:  'DELIVERABLE FORMAT:',
+        code: 'They override all defaults',
+        test: 'give them exactly what they asked for',
+      };
+      if (state.agents.some((a) => SENTINELS[a.id] && !(a.systemPrompt || '').includes(SENTINELS[a.id]))) {
+        state = { ...state, agents: state.agents.map((a) => {
+          const defAgent = def.agents.find((d) => d.id === a.id);
+          return (SENTINELS[a.id] && defAgent) ? { ...a, systemPrompt: defAgent.systemPrompt } : a;
+        }) };
+      }
     }
     // migrate V-Model coding trio (req/code/test) + their wiring if missing
     {
