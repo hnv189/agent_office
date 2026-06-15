@@ -13,6 +13,8 @@ exported symbols, and state keys are real and can be grepped.
 | 05 | [Rendering & sprites](05-rendering-and-sprites.md) | Pixel sprite engine, characters, rooms, animations |
 | 06 | [Views & UI](06-views-and-ui.md) | Sidebar, Office, Tasks, Connections, drawers, Tweaks |
 | 07 | [Extending](07-extending.md) | Recipes for common changes |
+| 08 | [LoRA learning loop](08-lora-learning-loop.md) | Build plan: rules + LoRA self-improvement |
+| 09 | [Self-Improve usage](09-self-improve-usage.md) | How to use GEPA, training data, and LoRA training |
 
 ## 30-second mental model
 
