@@ -80,6 +80,25 @@ async def hub_download_status():
     return dict(_dl_status)
 
 
+@app.get("/api/models")
+async def list_local_models():
+    """List model directories downloaded under models/."""
+    models_dir = Path("models")
+    if not models_dir.exists():
+        return []
+    result = []
+    for p in sorted(models_dir.iterdir()):
+        if not p.is_dir():
+            continue
+        size_bytes = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+        result.append({
+            "name": p.name,
+            "path": str(p.resolve()),
+            "size_mb": round(size_bytes / (1024 * 1024), 1),
+        })
+    return result
+
+
 # ── download worker ────────────────────────────────────────────────────────────
 def _make_proxies(proxy_url: str | None) -> dict | None:
     if not proxy_url:

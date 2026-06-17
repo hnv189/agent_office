@@ -378,92 +378,149 @@ function LocalSettings() {
   const [s] = useStore();
   const hub = s.settings.hub || {};
   const backendBase = (hub.backendUrl || 'http://localhost:8000').replace(/\/$/, '');
-  const serverUrl = hub.localServerUrl || 'http://localhost:1234/v1';
+  const hubBase    = (hub.hubUrl     || 'http://localhost:8001').replace(/\/$/, '');
+  const serverUrl  =  hub.localServerUrl || 'http://localhost:1234/v1';
 
   const setHub = (patch) => Store.set((st) => ({
     ...st, settings: { ...st.settings, hub: { ...(st.settings.hub || {}), ...patch } },
   }));
 
-  const [models, setModels] = React.useState([]);
-  const [selectedModel, setSelectedModel] = React.useState('');
+  const [models, setModels] = React.useState([]); // { name, path, source }
+  const [selectedPath, setSelectedPath] = React.useState('');
+  const [chatStatus, setChatStatus] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
   const [flash, setFlash] = React.useState('');
 
-  const fetchModels = React.useCallback(async () => {
-    try {
-      const [mr, rr] = await Promise.all([
-        fetch(backendBase + '/api/models', { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
-        fetch(backendBase + '/api/runs',   { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
-      ]);
-      const merged = rr.filter((r) => r.kind === 'merged').map((r) => ({ name: r.name, path: r.merged_path || r.path }));
-      setModels([...mr.map((m) => ({ name: m.name, path: m.path })), ...merged]);
-    } catch {}
-  }, [backendBase]);
+  const showFlash = (msg) => { setFlash(msg); setTimeout(() => setFlash(''), 2800); };
 
-  React.useEffect(() => { fetchModels(); }, [fetchModels]);
-
-  const applyToAll = () => {
-    if (!selectedModel) return;
-    const url = serverUrl.replace(/\/$/, '');
-    Store.set((st) => ({
-      ...st,
-      agents: st.agents.map((a) => ({
-        ...a,
-        connection: { ...a.connection, provider: 'local', model: selectedModel, baseUrl: url },
-      })),
+  const fetchAll = React.useCallback(async () => {
+    const [hubMods, loraMods, loraRuns, chatSt] = await Promise.all([
+      fetch(hubBase    + '/api/models',      { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+      fetch(backendBase + '/api/models',     { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+      fetch(backendBase + '/api/runs',       { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+      fetch(backendBase + '/api/chat/status',{ signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : null).catch(() => null),
+    ]);
+    const merged = loraRuns.filter((r) => r.kind === 'merged').map((r) => ({
+      name: r.name, path: r.merged_path || r.path, source: 'merged',
     }));
-    setFlash('✓ Applied to all agents');
-    setTimeout(() => setFlash(''), 2500);
+    const all = [
+      ...hubMods.map((m) => ({ name: m.name, path: m.path, source: 'hub' })),
+      ...loraMods.map((m) => ({ name: m.name, path: m.path, source: 'lora' })),
+      ...merged,
+    ];
+    const seen = new Set();
+    setModels(all.filter((m) => { if (seen.has(m.path)) return false; seen.add(m.path); return true; }));
+    setChatStatus(chatSt);
+  }, [hubBase, backendBase]);
+
+  React.useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  const chatState  = chatStatus?.state || 'unloaded';
+  const loadedPath = chatStatus?.model_path || '';
+  const selected   = models.find((m) => m.path === selectedPath);
+  const isLoaded   = !!loadedPath && loadedPath === selectedPath;
+
+  const loadModel = async () => {
+    if (!selectedPath) return;
+    setBusy(true);
+    try {
+      const r = await fetch(backendBase + '/api/chat/load', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model_path: selectedPath, use_4bit: true, trust_remote_code: true }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!r.ok) throw new Error(`Load failed: ${r.status}`);
+      await fetchAll();
+      showFlash('✓ Model loaded');
+    } catch (e) { showFlash('✕ ' + e.message); }
+    setBusy(false);
   };
 
-  const applyToUnlocked = () => {
-    if (!selectedModel) return;
+  const unloadModel = async () => {
+    setBusy(true);
+    try {
+      await fetch(backendBase + '/api/chat/unload', { method: 'POST', signal: AbortSignal.timeout(15000) });
+      await fetchAll();
+    } catch {}
+    setBusy(false);
+  };
+
+  const applyToAgents = (all) => {
+    if (!selected) return;
     const url = serverUrl.replace(/\/$/, '');
     Store.set((st) => ({
       ...st,
-      agents: st.agents.map((a) => a.locked ? a : {
-        ...a,
-        connection: { ...a.connection, provider: 'local', model: selectedModel, baseUrl: url },
+      agents: st.agents.map((a) => {
+        if (!all && a.locked) return a;
+        return { ...a, connection: { ...a.connection, provider: 'local', model: selected.name, baseUrl: url } };
       }),
     }));
-    setFlash('✓ Applied to non-locked agents');
-    setTimeout(() => setFlash(''), 2500);
+    showFlash(`✓ Applied to ${all ? 'all' : 'unlocked'} agents`);
   };
+
+  const srcLabel = { hub: '↓ downloaded', lora: 'base model', merged: '✓ merged' };
 
   return (
     <>
       <div className="sect-l">Local (downloaded models)</div>
-      <Field label="Inference server URL" hint="OpenAI-compatible">
-        <input className="inp" value={serverUrl} placeholder="http://localhost:1234/v1"
-          onChange={(e) => setHub({ localServerUrl: e.target.value })} />
-      </Field>
+
+      {/* model picker */}
       <label className="fld">
-        <span className="fld-l">Model
-          <button className="btn sm ghost" style={{ padding: '1px 8px', fontSize: 11 }} onClick={fetchModels}>↺</button>
+        <span className="fld-l">
+          Available models
+          <button className="btn sm ghost" style={{ padding: '1px 8px', fontSize: 11 }} onClick={fetchAll}>↺</button>
         </span>
         {models.length > 0
           ? (
-            <select className="inp" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-              <option value="">— pick a downloaded model —</option>
-              {models.map((m) => <option key={m.path} value={m.name}>{m.name}</option>)}
+            <select className="inp" value={selectedPath} onChange={(e) => setSelectedPath(e.target.value)}>
+              <option value="">— select a model —</option>
+              {models.map((m) => (
+                <option key={m.path} value={m.path}>[{srcLabel[m.source] || m.source}] {m.name}</option>
+              ))}
             </select>
           )
-          : <input className="inp" value={selectedModel} placeholder="type model name"
-              onChange={(e) => setSelectedModel(e.target.value)} />
+          : <p className="note" style={{ margin: 0 }}>No models found. Download one in <b>Model Hub</b>, or check that the hub server and lora-finetune backend are running.</p>
         }
       </label>
-      {models.length === 0 && (
-        <p className="note">No models found at <code>{backendBase}</code>. Download one in Model Hub, or type a name manually.</p>
+      {selected && <p className="note" style={{ marginTop: -8, wordBreak: 'break-all' }}>{selected.path}</p>}
+
+      {/* current load status */}
+      {loadedPath && (
+        <div className="local-loaded-bar">
+          <span className={'local-chat-dot ' + chatState} />
+          <span className="local-loaded-name">{loadedPath.split(/[\\/]/).pop()}</span>
+          <span className="local-chat-state">{chatState}</span>
+        </div>
       )}
+
+      {/* load / unload controls */}
+      <div className="local-actions">
+        <button className="btn sm" onClick={loadModel}
+          disabled={busy || !selectedPath || isLoaded || chatState === 'loading'}>
+          {busy && !isLoaded ? '⏳' : '⬆'} Load into backend
+        </button>
+        <button className="btn sm ghost" onClick={unloadModel} disabled={busy || chatState !== 'ready'}>
+          ⬇ Unload
+        </button>
+      </div>
+      <p className="note">Loads the model into the lora-finetune backend VRAM. Agents set to <em>LoRA</em> provider will use it. Or serve externally and use <em>Local</em> provider below.</p>
+
+      {/* inference server + apply */}
+      <Field label="Inference server URL" hint="OpenAI-compatible · for Local provider">
+        <input className="inp" value={serverUrl} placeholder="http://localhost:1234/v1"
+          onChange={(e) => setHub({ localServerUrl: e.target.value })} />
+      </Field>
       <div className="local-apply-row">
-        <button className="btn primary sm" onClick={applyToUnlocked} disabled={!selectedModel}>
+        <button className="btn primary sm" onClick={() => applyToAgents(false)} disabled={!selected}>
           Apply to agents
         </button>
-        <button className="btn sm ghost" onClick={applyToAll} disabled={!selectedModel} title="Includes locked V-Model agents">
-          Apply to all (incl. locked)
+        <button className="btn sm ghost" onClick={() => applyToAgents(true)} disabled={!selected}>
+          Apply to all
         </button>
         {flash && <span className="local-apply-flash">{flash}</span>}
       </div>
-      <p className="note">Sets provider → Local and model name on every agent. Start your inference server first (LM Studio, Ollama, llama.cpp, etc.) pointed at the URL above.</p>
+      <p className="note">Sets provider → Local, model name, and server URL on every (non-locked) agent in one click.</p>
     </>
   );
 }

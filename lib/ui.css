@@ -418,3 +418,12 @@ select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xm
 /* ── Local provider (Settings) ───────────────────────────── */
 .local-apply-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
 .local-apply-flash{font-size:12px;color:#2ee6a6;font-family:var(--mono)}
+.local-loaded-bar{display:flex;align-items:center;gap:8px;padding:7px 10px;margin-bottom:10px;
+  background:rgba(46,230,166,.06);border:1px solid rgba(46,230,166,.2);border-radius:9px;font-size:12px}
+.local-chat-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.local-chat-dot.ready{background:#2ee6a6;box-shadow:0 0 5px rgba(46,230,166,.6)}
+.local-chat-dot.loading{background:#ffd23f;animation:pulse 1s infinite}
+.local-chat-dot.error{background:#ff4d6d}
+.local-loaded-name{flex:1;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.local-chat-state{font-size:11px;color:var(--muted);flex-shrink:0;text-transform:uppercase;letter-spacing:.04em}
+.local-actions{display:flex;gap:8px;margin-bottom:6px}
