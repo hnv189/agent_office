@@ -53,7 +53,11 @@ function SearchPanel({ hub, backendBase, onRefresh }) {
       const r = await fetch(backendBase + '/api/hub/download', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ repo_id: model.id, hf_endpoint: hub.proxyUrl || '' }),
+        body: JSON.stringify({
+          repo_id: model.id,
+          hf_endpoint: hub.proxyUrl || '',
+          http_proxy: hub.httpProxy || '',
+        }),
         signal: AbortSignal.timeout(30000),
       });
       if (!r.ok) {
@@ -258,11 +262,19 @@ function HubConfig({ hub, set }) {
 
       <div className="hub-cfg-grid">
         <div className="hub-cfg-group">
-          <label className="hub-cfg-label">HuggingFace mirror / proxy URL</label>
+          <label className="hub-cfg-label">HTTP proxy (for backend downloads)</label>
+          <input className="inp" placeholder="http://127.0.0.1:3128"
+            value={hub.httpProxy || ''}
+            onChange={(e) => set({ httpProxy: e.target.value.trim() })} />
+          <p className="note">Forwarded to the backend as <code>http_proxy</code> / <code>https_proxy</code> for all HuggingFace download requests. The backend must accept and apply this field.</p>
+        </div>
+
+        <div className="hub-cfg-group">
+          <label className="hub-cfg-label">HuggingFace mirror URL</label>
           <input className="inp" placeholder="https://hf-mirror.com  (blank = huggingface.co)"
             value={hub.proxyUrl || ''}
             onChange={(e) => set({ proxyUrl: e.target.value.trim() })} />
-          <p className="note">Used for model search and download requests. Set if HuggingFace.co is unreachable.</p>
+          <p className="note">Replaces huggingface.co for in-browser model search. Use for CDN mirrors, not HTTP proxies.</p>
         </div>
 
         <div className="hub-cfg-group">
