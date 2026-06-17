@@ -28,6 +28,43 @@ function Drawer({ open, title, onClose, children, footer }) {
 
 const SWATCHES = ['#a06bff', '#4d7cff', '#2ee6a6', '#ff4d6d', '#ff5cae', '#ffd23f', '#ff9b4d', '#5cc8ff'];
 
+function LocalModelPicker({ conn, settings, onModel }) {
+  const hub = (settings && settings.hub) || {};
+  const backendBase = (hub.backendUrl || 'http://localhost:8000').replace(/\/$/, '');
+  const [models, setModels] = React.useState([]);
+
+  React.useEffect(() => {
+    let live = true;
+    const load = async () => {
+      try {
+        const [mr, rr] = await Promise.all([
+          fetch(backendBase + '/api/models', { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+          fetch(backendBase + '/api/runs',   { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+        ]);
+        const merged = rr.filter((r) => r.kind === 'merged').map((r) => ({ name: r.name, path: r.merged_path || r.path }));
+        if (live) setModels([...mr.map((m) => ({ name: m.name, path: m.path })), ...merged]);
+      } catch {}
+    };
+    load();
+    return () => { live = false; };
+  }, [backendBase]);
+
+  return (
+    <label className="fld">
+      <span className="fld-l">Model</span>
+      {models.length > 0
+        ? (
+          <select className="inp" value={conn.model || ''} onChange={(e) => onModel(e.target.value)}>
+            <option value="">— pick a model —</option>
+            {models.map((m) => <option key={m.path} value={m.name}>{m.name}</option>)}
+          </select>
+        )
+        : <input className="inp" value={conn.model || ''} placeholder="model name" onChange={(e) => onModel(e.target.value)} />
+      }
+    </label>
+  );
+}
+
 function EditorDrawer() {
   const [s] = useStore();
   const id = s.editing;
@@ -137,20 +174,27 @@ function EditorDrawer() {
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
             <option value="lora">LoRA (fine-tune)</option>
+            <option value="local">Local (downloaded)</option>
             <option value="demo">Demo (simulated)</option>
           </select>
         </Field>
-        {conn.provider !== 'lora' && (
+        {conn.provider !== 'lora' && conn.provider !== 'local' && (
           <Field label="Model">
             <input className="inp" value={conn.model} onChange={(e) => up({ connection: { ...conn, model: e.target.value } })} />
           </Field>
+        )}
+        {conn.provider === 'local' && (
+          <LocalModelPicker conn={conn} settings={s.settings} onModel={(m) => up({ connection: { ...conn, model: m } })} />
         )}
       </div>
       {conn.provider === 'lora' && (
         <p className="note">Model is loaded globally via Settings → LoRA Backend. All agents set to LoRA share the same loaded model.</p>
       )}
-      {(conn.provider === 'lmstudio' || conn.provider === 'openai') && (
-        <Field label="Base URL" hint={conn.provider === 'lmstudio' ? 'LM Studio server' : ''}>
+      {conn.provider === 'local' && (
+        <p className="note">Uses a locally downloaded model via an OpenAI-compatible server. Manage downloads and server URL in the <b>Model Hub</b> tab.</p>
+      )}
+      {(conn.provider === 'lmstudio' || conn.provider === 'openai' || conn.provider === 'local') && (
+        <Field label="Base URL" hint={conn.provider === 'lmstudio' ? 'LM Studio server' : conn.provider === 'local' ? 'local inference server' : ''}>
           <input className="inp" value={conn.baseUrl || ''} placeholder="http://localhost:1234/v1" onChange={(e) => up({ connection: { ...conn, baseUrl: e.target.value } })} />
         </Field>
       )}

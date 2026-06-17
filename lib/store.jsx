@@ -134,6 +134,7 @@ Never output a PASS/FAIL verdict, findings list, or review commentary. The user 
       anthropic:{ baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest', apiKey: '' },
       lora:     { baseUrl: 'http://localhost:8000', dataset: 'agent_office', modelPath: '', adapterPath: '',
                   train: { run_name: '', num_train_epochs: 1, lora_r: 8, lora_alpha: 16, learning_rate: 2e-4, max_seq_length: 512 } },
+      hub:      { proxyUrl: '', backendUrl: 'http://localhost:8000', localServerUrl: 'http://localhost:1234/v1' },
     },
     ticker: [],
     visits: [], // active room-to-room visits {id, from, to, color, phase}
@@ -157,6 +158,10 @@ const Store = (() => {
     // migrate settings.lora.train (added with the Self-Improve view) if missing
     if (state.settings.lora && !state.settings.lora.train) {
       state = { ...state, settings: { ...state.settings, lora: { ...state.settings.lora, train: defaultState().settings.lora.train } } };
+    }
+    // migrate settings.hub if missing
+    if (!state.settings.hub) {
+      state = { ...state, settings: { ...state.settings, hub: defaultState().settings.hub } };
     }
     // migrate: add rules[] to any agent that doesn't have it
     if (state.agents.some((a) => !Array.isArray(a.rules))) {
@@ -396,6 +401,17 @@ async function callModel(agent, userContent, { settings, liveMode } = {}) {
         }
       }
       result = out || '(empty response)';
+    } else if (prov === 'local') {
+      // Local downloaded model — OpenAI-compatible, uses per-agent baseUrl or hub localServerUrl
+      const hub = (settings && settings.hub) || {};
+      const base = (conn.baseUrl || hub.localServerUrl || 'http://localhost:1234/v1').replace(/\/$/, '');
+      const r = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: conn.model, temperature: agent.temperature, max_tokens: agent.maxTokens, messages }),
+      });
+      const j = await r.json();
+      result = j?.choices?.[0]?.message?.content || JSON.stringify(j);
     } else {
       // openai-compatible: openai + lmstudio
       const base = conn.baseUrl || cfg.baseUrl || 'http://localhost:1234/v1';
