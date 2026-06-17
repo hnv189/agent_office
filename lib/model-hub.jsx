@@ -34,12 +34,26 @@ function SearchPanel({ hub, backendBase, onRefresh }) {
     if (!query) return;
     setLoading(true); setErr(null);
     try {
-      const r = await hfFetch(
-        `/api/models?search=${encodeURIComponent(query)}&limit=24&sort=downloads&direction=-1&full=false`,
-        hub
-      );
-      if (!r.ok) throw new Error(`HuggingFace API returned ${r.status}`);
-      setResults(await r.json());
+      let data;
+      if (hub.httpProxy) {
+        // Route through backend so the HTTP proxy is applied server-side
+        const r = await fetch(backendBase + '/api/hub/search', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ query, http_proxy: hub.httpProxy, hf_endpoint: hub.proxyUrl || '', limit: 24 }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!r.ok) throw new Error(`Backend search failed (${r.status}) — is /api/hub/search implemented?`);
+        data = await r.json();
+      } else {
+        const r = await hfFetch(
+          `/api/models?search=${encodeURIComponent(query)}&limit=24&sort=downloads&direction=-1&full=false`,
+          hub
+        );
+        if (!r.ok) throw new Error(`HuggingFace API returned ${r.status}`);
+        data = await r.json();
+      }
+      setResults(data);
     } catch (e) {
       setErr(e.message);
       setResults([]);
