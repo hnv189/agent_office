@@ -134,7 +134,7 @@ Never output a PASS/FAIL verdict, findings list, or review commentary. The user 
       anthropic:{ baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest', apiKey: '' },
       lora:     { baseUrl: 'http://localhost:8000', dataset: 'agent_office', modelPath: '', adapterPath: '',
                   train: { run_name: '', num_train_epochs: 1, lora_r: 8, lora_alpha: 16, learning_rate: 2e-4, max_seq_length: 512 } },
-      hub:      { proxyUrl: '', backendUrl: 'http://localhost:8000', localServerUrl: 'http://localhost:1234/v1', httpProxy: '' },
+      hub:      { proxyUrl: '', backendUrl: 'http://localhost:8000', localServerUrl: 'http://localhost:1234/v1', httpProxy: '', hubUrl: 'http://localhost:8001' },
     },
     ticker: [],
     visits: [], // active room-to-room visits {id, from, to, color, phase}
@@ -163,9 +163,14 @@ const Store = (() => {
     if (!state.settings.hub) {
       state = { ...state, settings: { ...state.settings, hub: defaultState().settings.hub } };
     }
-    // migrate settings.hub.httpProxy if missing
-    if (state.settings.hub && state.settings.hub.httpProxy === undefined) {
-      state = { ...state, settings: { ...state.settings, hub: { ...state.settings.hub, httpProxy: '' } } };
+    // migrate settings.hub fields added incrementally
+    if (state.settings.hub) {
+      const def = defaultState().settings.hub;
+      const missing = Object.keys(def).filter((k) => state.settings.hub[k] === undefined);
+      if (missing.length) {
+        const patch = Object.fromEntries(missing.map((k) => [k, def[k]]));
+        state = { ...state, settings: { ...state.settings, hub: { ...state.settings.hub, ...patch } } };
+      }
     }
     // migrate: add rules[] to any agent that doesn't have it
     if (state.agents.some((a) => !Array.isArray(a.rules))) {

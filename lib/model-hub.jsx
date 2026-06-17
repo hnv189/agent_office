@@ -22,7 +22,7 @@ function fmtNum(n) {
 }
 
 // ── Search Panel ───────────────────────────────────────────────────────────────
-function SearchPanel({ hub, backendBase, onRefresh }) {
+function SearchPanel({ hub, hubBase, onRefresh }) {
   const [q, setQ] = React.useState('');
   const [results, setResults] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
@@ -35,16 +35,20 @@ function SearchPanel({ hub, backendBase, onRefresh }) {
     setLoading(true); setErr(null);
     try {
       let data;
-      if (hub.httpProxy) {
-        // Route through backend so the HTTP proxy is applied server-side
-        const r = await fetch(backendBase + '/api/hub/search', {
+      if (hub.httpProxy || hub.proxyUrl) {
+        // Route through hub server so proxy / HF endpoint are applied server-side
+        const r = await fetch(hubBase + '/api/hub/search', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ query, http_proxy: hub.httpProxy, hf_endpoint: hub.proxyUrl || '', limit: 24 }),
+          body: JSON.stringify({ query, http_proxy: hub.httpProxy || '', hf_endpoint: hub.proxyUrl || '', limit: 24 }),
           signal: AbortSignal.timeout(20000),
         });
-        if (!r.ok) throw new Error(`Backend search failed (${r.status}) — is /api/hub/search implemented?`);
+        if (!r.ok) {
+          const t = await r.text().catch(() => '');
+          throw new Error(`Hub server search failed (${r.status})${t ? ': ' + t : ''}`);
+        }
         data = await r.json();
+        if (data.error) throw new Error(data.error);
       } else {
         const r = await hfFetch(
           `/api/models?search=${encodeURIComponent(query)}&limit=24&sort=downloads&direction=-1&full=false`,
@@ -64,7 +68,7 @@ function SearchPanel({ hub, backendBase, onRefresh }) {
   const download = async (model) => {
     setDlState((d) => ({ ...d, [model.id]: 'downloading' }));
     try {
-      const r = await fetch(backendBase + '/api/hub/download', {
+      const r = await fetch(hubBase + '/api/hub/download', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -76,7 +80,7 @@ function SearchPanel({ hub, backendBase, onRefresh }) {
       });
       if (!r.ok) {
         const t = await r.text().catch(() => '');
-        throw new Error(t || `Backend ${r.status}`);
+        throw new Error(t || `Hub server ${r.status}`);
       }
       setDlState((d) => ({ ...d, [model.id]: 'done' }));
       onRefresh();
@@ -141,20 +145,20 @@ function SearchPanel({ hub, backendBase, onRefresh }) {
 }
 
 // ── Download Progress Panel ────────────────────────────────────────────────────
-function DownloadProgress({ backendBase }) {
+function DownloadProgress({ hubBase }) {
   const [status, setStatus] = React.useState(null);
 
   React.useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch(backendBase + '/api/hub/download/status', { signal: AbortSignal.timeout(4000) });
+        const r = await fetch(hubBase + '/api/hub/download/status', { signal: AbortSignal.timeout(4000) });
         if (r.ok) setStatus(await r.json());
       } catch {}
     };
     poll();
     const id = setInterval(poll, 2500);
     return () => clearInterval(id);
-  }, [backendBase]);
+  }, [hubBase]);
 
   if (!status || status.status === 'idle' || status.status === 'done') return null;
 
@@ -276,11 +280,19 @@ function HubConfig({ hub, set }) {
 
       <div className="hub-cfg-grid">
         <div className="hub-cfg-group">
-          <label className="hub-cfg-label">HTTP proxy (for backend downloads)</label>
+          <label className="hub-cfg-label">Hub Server URL <span className="hub-cfg-required">required for search &amp; download</span></label>
+          <input className="inp" placeholder="http://localhost:8001"
+            value={hub.hubUrl || ''}
+            onChange={(e) => set({ hubUrl: e.target.value.trim() })} />
+          <p className="note">Run <code>python tools/hub_server.py</code> from the repo root. Handles HF search, model downloads, and proxy routing.</p>
+        </div>
+
+        <div className="hub-cfg-group">
+          <label className="hub-cfg-label">HTTP proxy (applied by hub server)</label>
           <input className="inp" placeholder="http://127.0.0.1:3128"
             value={hub.httpProxy || ''}
             onChange={(e) => set({ httpProxy: e.target.value.trim() })} />
-          <p className="note">Forwarded to the backend as <code>http_proxy</code> / <code>https_proxy</code> for all HuggingFace download requests. The backend must accept and apply this field.</p>
+          <p className="note">Sent to hub server as <code>http_proxy</code> for all HuggingFace requests. Leave blank if HuggingFace is directly reachable.</p>
         </div>
 
         <div className="hub-cfg-group">
@@ -288,7 +300,7 @@ function HubConfig({ hub, set }) {
           <input className="inp" placeholder="https://hf-mirror.com  (blank = huggingface.co)"
             value={hub.proxyUrl || ''}
             onChange={(e) => set({ proxyUrl: e.target.value.trim() })} />
-          <p className="note">Replaces huggingface.co for in-browser model search. Use for CDN mirrors, not HTTP proxies.</p>
+          <p className="note">CDN mirror replacing huggingface.co. Used by hub server for both search and downloads.</p>
         </div>
 
         <div className="hub-cfg-group">
@@ -357,7 +369,10 @@ function BackendStatus({ backendBase }) {
 function ModelHubView() {
   const [s] = useStore();
   const hub = s.settings.hub || {};
+  // backendBase → lora-finetune (models, runs, training, chat)
   const backendBase = (hub.backendUrl || 'http://localhost:8000').replace(/\/$/, '');
+  // hubBase → tools/hub_server.py (search, download, download/status)
+  const hubBase = (hub.hubUrl || 'http://localhost:8001').replace(/\/$/, '');
 
   const setHub = (patch) => Store.set((st) => ({
     ...st, settings: { ...st.settings, hub: { ...(st.settings.hub || {}), ...patch } },
@@ -367,7 +382,6 @@ function ModelHubView() {
   const refresh = () => setRefreshKey((k) => k + 1);
 
   const useModel = (m, hubCfg) => {
-    // Open the first non-locked agent editor pre-filled with this model
     const serverUrl = (hubCfg.localServerUrl || 'http://localhost:1234/v1').replace(/\/$/, '');
     const agent = s.agents.find((a) => !a.locked);
     if (!agent) return;
@@ -385,8 +399,8 @@ function ModelHubView() {
       </div>
 
       <BackendStatus backendBase={backendBase} />
-      <DownloadProgress backendBase={backendBase} />
-      <SearchPanel hub={hub} backendBase={backendBase} onRefresh={refresh} />
+      <DownloadProgress hubBase={hubBase} />
+      <SearchPanel hub={hub} hubBase={hubBase} onRefresh={refresh} />
       <LocalModelsPanel backendBase={backendBase} hub={hub} onUseModel={useModel} refreshKey={refreshKey} />
       <HubConfig hub={hub} set={setHub} />
     </div>

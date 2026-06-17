@@ -412,4 +412,5 @@ select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xm
 .hub-cfg-grid{display:flex;flex-direction:column;gap:14px}
 .hub-cfg-group{display:flex;flex-direction:column;gap:6px}
 .hub-cfg-label{font-size:12px;font-weight:500;color:var(--muted)}
+.hub-cfg-required{font-size:10px;font-weight:400;color:#a06bff;margin-left:6px;letter-spacing:.03em}
 @keyframes spin{to{transform:rotate(360deg)}}
