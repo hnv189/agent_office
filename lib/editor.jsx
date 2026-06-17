@@ -374,6 +374,100 @@ function LoraSettings() {
   );
 }
 
+function LocalSettings() {
+  const [s] = useStore();
+  const hub = s.settings.hub || {};
+  const backendBase = (hub.backendUrl || 'http://localhost:8000').replace(/\/$/, '');
+  const serverUrl = hub.localServerUrl || 'http://localhost:1234/v1';
+
+  const setHub = (patch) => Store.set((st) => ({
+    ...st, settings: { ...st.settings, hub: { ...(st.settings.hub || {}), ...patch } },
+  }));
+
+  const [models, setModels] = React.useState([]);
+  const [selectedModel, setSelectedModel] = React.useState('');
+  const [flash, setFlash] = React.useState('');
+
+  const fetchModels = React.useCallback(async () => {
+    try {
+      const [mr, rr] = await Promise.all([
+        fetch(backendBase + '/api/models', { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+        fetch(backendBase + '/api/runs',   { signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      const merged = rr.filter((r) => r.kind === 'merged').map((r) => ({ name: r.name, path: r.merged_path || r.path }));
+      setModels([...mr.map((m) => ({ name: m.name, path: m.path })), ...merged]);
+    } catch {}
+  }, [backendBase]);
+
+  React.useEffect(() => { fetchModels(); }, [fetchModels]);
+
+  const applyToAll = () => {
+    if (!selectedModel) return;
+    const url = serverUrl.replace(/\/$/, '');
+    Store.set((st) => ({
+      ...st,
+      agents: st.agents.map((a) => ({
+        ...a,
+        connection: { ...a.connection, provider: 'local', model: selectedModel, baseUrl: url },
+      })),
+    }));
+    setFlash('✓ Applied to all agents');
+    setTimeout(() => setFlash(''), 2500);
+  };
+
+  const applyToUnlocked = () => {
+    if (!selectedModel) return;
+    const url = serverUrl.replace(/\/$/, '');
+    Store.set((st) => ({
+      ...st,
+      agents: st.agents.map((a) => a.locked ? a : {
+        ...a,
+        connection: { ...a.connection, provider: 'local', model: selectedModel, baseUrl: url },
+      }),
+    }));
+    setFlash('✓ Applied to non-locked agents');
+    setTimeout(() => setFlash(''), 2500);
+  };
+
+  return (
+    <>
+      <div className="sect-l">Local (downloaded models)</div>
+      <Field label="Inference server URL" hint="OpenAI-compatible">
+        <input className="inp" value={serverUrl} placeholder="http://localhost:1234/v1"
+          onChange={(e) => setHub({ localServerUrl: e.target.value })} />
+      </Field>
+      <label className="fld">
+        <span className="fld-l">Model
+          <button className="btn sm ghost" style={{ padding: '1px 8px', fontSize: 11 }} onClick={fetchModels}>↺</button>
+        </span>
+        {models.length > 0
+          ? (
+            <select className="inp" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+              <option value="">— pick a downloaded model —</option>
+              {models.map((m) => <option key={m.path} value={m.name}>{m.name}</option>)}
+            </select>
+          )
+          : <input className="inp" value={selectedModel} placeholder="type model name"
+              onChange={(e) => setSelectedModel(e.target.value)} />
+        }
+      </label>
+      {models.length === 0 && (
+        <p className="note">No models found at <code>{backendBase}</code>. Download one in Model Hub, or type a name manually.</p>
+      )}
+      <div className="local-apply-row">
+        <button className="btn primary sm" onClick={applyToUnlocked} disabled={!selectedModel}>
+          Apply to agents
+        </button>
+        <button className="btn sm ghost" onClick={applyToAll} disabled={!selectedModel} title="Includes locked V-Model agents">
+          Apply to all (incl. locked)
+        </button>
+        {flash && <span className="local-apply-flash">{flash}</span>}
+      </div>
+      <p className="note">Sets provider → Local and model name on every agent. Start your inference server first (LM Studio, Ollama, llama.cpp, etc.) pointed at the URL above.</p>
+    </>
+  );
+}
+
 function SettingsDrawer() {
   const [s] = useStore();
   const open = !!s.settingsOpen;
@@ -404,6 +498,7 @@ function SettingsDrawer() {
       <Field label="Default model"><input className="inp" value={s.settings.anthropic.model} onChange={(e) => set('anthropic', { model: e.target.value })} /></Field>
 
       <LoraSettings />
+      <LocalSettings />
     </Drawer>
   );
 }
