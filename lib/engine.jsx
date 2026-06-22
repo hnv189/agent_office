@@ -92,7 +92,7 @@ async function runTask(taskId, opts = {}) {
     steps.push({
       agentId: id, agentName: a.name, agentColor: a.color, output: out,
       // Phase 3 trace — exact triple used; becomes LoRA training data after feedback
-      system: effectiveAgent.systemPrompt || '',
+      system: typeof buildSystemPrompt === 'function' ? buildSystemPrompt(effectiveAgent) : (effectiveAgent.systemPrompt || ''),
       user: inputPayload,
       assistant: out,
     });
@@ -114,6 +114,58 @@ function extractJSON(text) {
   return null;
 }
 
+function taskLooksLikeFileWrite(task) {
+  const text = `${task?.title || ''}\n${task?.body || ''}`.toLowerCase();
+  return /\b(create|write|modify|edit|patch|update|replace|save)\b/.test(text)
+    && /\b(file|\.txt|\.md|\.js|\.jsx|\.ts|\.tsx|\.json|\.css|\.html|\.py|\.sh)\b/.test(text);
+}
+
+function normalizeAgentRef(ref, agents) {
+  const raw = String(typeof ref === 'object' ? (ref?.id || ref?.name || '') : ref || '').trim();
+  if (!raw) return null;
+  const key = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const match = agents.find((a) => (
+    a.id.toLowerCase() === key
+    || a.name.toLowerCase().replace(/[^a-z0-9_-]/g, '') === key
+    || String(a.role2 || '').toLowerCase() === key
+  ));
+  return match?.id || null;
+}
+
+function preferredFileWriter(agents) {
+  const ids = ['sol', 'code', 'clay'];
+  return ids.map((id) => agents.find((a) => a.id === id && (a.tools || []).includes('files.write'))).find(Boolean)
+    || agents.find((a) => (a.tools || []).includes('files.write'));
+}
+
+function normalizePlan(plan, task, agents) {
+  const fileWriteTask = taskLooksLikeFileWrite(task);
+  const pipeline = (plan.pipeline || []).map((id) => normalizeAgentRef(id, agents)).filter(Boolean);
+  const patches = (plan.agents || []).map((patch) => {
+    const id = normalizeAgentRef(patch, agents);
+    return id ? { ...patch, id } : null;
+  }).filter(Boolean);
+
+  if (fileWriteTask) {
+    const writer = preferredFileWriter(agents);
+    if (writer) {
+      const writerPatch = patches.find((p) => p.id === writer.id) || {};
+      return {
+        ...plan,
+        rationale: plan.rationale || `${writer.name} has workspace file-write tools.`,
+        pipeline: [writer.id],
+        agents: [{
+          id: writer.id,
+          temperature: writerPatch.temperature ?? 0.2,
+          systemPrompt: writerPatch.systemPrompt || `You receive a local workspace file task. Use the available file tools to complete it. For full content replacement or creation, call write_file with the requested relative path and complete content. For targeted edits, inspect with read_file if needed and call patch_file. If the task contains a placeholder asking for the responsible agent name, replace it with "${writer.name}". Final answer: confirm the path written or modified.`,
+        }],
+      };
+    }
+  }
+
+  return { ...plan, pipeline, agents: patches };
+}
+
 async function planTask(taskId) {
   const s = Store.get();
   const task = s.tasks.find((t) => t.id === taskId);
@@ -126,7 +178,10 @@ async function planTask(taskId) {
 
   const nova = s.agents.find((a) => a.id === 'nova') || s.agents[0];
   const modelId = nova.connection?.model || s.settings.lmstudio?.model || 'local-model';
-  const agentList = s.agents.map((a) => `  - id:"${a.id}" name:"${a.name}" role:"${a.role}"`).join('\n');
+  const agentList = s.agents.map((a) => {
+    const tools = (a.tools || []).length ? (a.tools || []).join(', ') : 'none';
+    return `  - id:"${a.id}" name:"${a.name}" role:"${a.role}" tools:"${tools}"`;
+  }).join('\n');
 
   let novaJD = '';
   try {
@@ -154,23 +209,23 @@ Return ONLY this JSON object, nothing else:
   "agents": [
     { "id": "agentId1", "systemPrompt": "precise task instruction", "temperature": 0.5 }
   ]
-}`;
+}
+
+Use exact agent ids from AVAILABLE AGENTS in "pipeline" and "agents[].id"; never use display names. For file create/modify/edit tasks, use a single agent with files.write unless the task also asks for review.`;
 
   Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, planStatus: 'planning', plan: null, planError: null } : t) }));
   Store.log(`◈ Nova planning "${task.title}"…`, nova.color);
 
   try {
-    const plannerNova = { ...nova, systemPrompt: 'You output only valid JSON. No prose, no markdown, just the JSON object.' };
+    const plannerNova = { ...nova, tools: [], systemPrompt: 'You output only valid JSON. No prose, no markdown, just the JSON object.' };
     const response = await callModel(plannerNova, planningPrompt, { settings: s.settings, liveMode: s.liveMode });
-    const plan = extractJSON(response);
+    let plan = extractJSON(response);
 
     if (!plan || !Array.isArray(plan.pipeline) || !Array.isArray(plan.agents)) {
       throw new Error('Nova returned an unreadable plan — try re-planning.');
     }
 
-    const validIds = new Set(s.agents.map((a) => a.id));
-    plan.pipeline = plan.pipeline.filter((id) => validIds.has(id));
-    plan.agents = plan.agents.filter((a) => validIds.has(a.id));
+    plan = normalizePlan(plan, task, s.agents);
     if (plan.pipeline.length === 0) throw new Error('No valid agents in the plan — try re-planning.');
 
     Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, planStatus: 'ready', plan } : t) }));

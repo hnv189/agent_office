@@ -36,6 +36,19 @@ is `[nova, cobalt, rosa, sol, clay]` (the `Nova→Ember` branch is not included
 because only the first edge is followed). This is intentional and simple; if you
 need fan-out/branching, this is the function to upgrade.
 
+## Nova planning — `planTask(taskId)`
+
+Live-mode tasks can ask Nova to return a JSON plan before execution. The planner
+prompt includes each available agent's id, display name, role, and tool chips.
+Returned agent references are normalised so small local models can say `Sol` or
+`Forge` and still map to `sol` / `code`.
+
+File-write tasks get one extra guardrail: if the title/body looks like a request
+to create, write, modify, edit, patch, update, replace, or save a file, the plan is
+forced onto an agent with `files.write` (preferring Sol, then Forge, then Clay).
+That keeps simple file operations from accidentally routing through research-only
+agents that cannot call `write_file` or `patch_file`.
+
 ## Running a task — `runTask(taskId)`
 
 Async. For the task's `assignee` it builds `pipelineFrom(assignee)` and walks it:
@@ -67,6 +80,12 @@ Single entry point for getting a response from an agent. Logic:
   {baseUrl}/chat/completions` with `messages: [system, user]`,
   `Authorization: Bearer …` if an `apiKey` exists. Reads
   `json.choices[0].message.content`.
+- If the agent has executable file chips (`files.read` / `files.write`) and the
+  local Tool Bridge is enabled, `callModel()` also sends OpenAI-compatible
+  function schemas. When the model returns `tool_calls`, the browser calls
+  `POST {settings.tools.baseUrl}/api/tools/call`, appends each `role:"tool"`
+  result, and continues until the model returns final text or hits
+  `settings.tools.maxRounds`.
 - Everything is wrapped in `try/catch`; on **any** failure it returns
   `'[offline — simulated] ' + simulate(...)`. **Keep this fallback** — it is what
   makes the app never break in the sandbox or when a backend is down.
@@ -88,3 +107,6 @@ pool and a truncated echo of the input, so Demo mode looks plausible.
   when the file is opened locally. Browsers also require **CORS** to be enabled in
   LM Studio's server settings.
 - Cloud keys are stored only in `localStorage` on the user's machine.
+- Local file tools require launching the Node server with
+  `node .claude/serve.js`; plain `python3 -m http.server` can still preview the
+  app, but the Tool Bridge will show offline.

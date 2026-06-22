@@ -554,6 +554,7 @@ function SettingsDrawer() {
       <Field label="API key"><input className="inp" type="password" placeholder="sk-ant-…" value={s.settings.anthropic.apiKey} onChange={(e) => set('anthropic', { apiKey: e.target.value })} /></Field>
       <Field label="Default model"><input className="inp" value={s.settings.anthropic.model} onChange={(e) => set('anthropic', { model: e.target.value })} /></Field>
 
+      <ToolBridgeSettings />
       <LoraSettings />
       <LocalSettings />
     </Drawer>

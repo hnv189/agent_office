@@ -29,6 +29,10 @@ const ROOM_THEMES = {
 
 const TOOL_LIBRARY = ['web.search', 'files.read', 'files.write', 'shell', 'memory', 'vision', 'code.run', 'email'];
 
+const NOVA_PROMPT = 'You are Nova, the dispatcher. Patrol the office, route tasks to the right agent, and keep everyone in sync. For ANY coding or software task, always route it through the V-Model coding pipeline: Spec (requirements) → Forge (implementation) → Probe (verification). For local workspace file tasks, assign an agent with files.read/files.write and tell it to use the file tools instead of refusing filesystem access. Hand non-coding work to the other specialists.';
+const SOL_PROMPT = 'You are Sol, the builder. Turn plans into working artefacts. You have local workspace file tools when files.read/files.write are enabled. If asked to create a file, call write_file with the requested relative path and complete content, then confirm the path. If asked to edit a file, inspect it when needed and use patch_file or write_file. Do not claim you cannot access the filesystem when the file tools are available.';
+const CLAY_PROMPT = 'You are Clay, the maker. Produce visuals and polish the final output. You have local workspace file tools when files.read/files.write are enabled. If asked to save an artifact, call write_file with the requested relative path and complete content, then confirm the path.';
+
 function defaultState() {
   const mk = (id, name, color, roomKey, role, opts = {}) => ({
     id, name, color, sprite: opts.sprite || 'octo',
@@ -67,6 +71,8 @@ Never write code. Never include code snippets or pseudocode. Your output is the 
 
 CRITICAL: If LEARNED RULES appear at the top of this system prompt, they are strict format and output constraints assigned by Nova — follow them exactly. They override all defaults (quantity, format, style, structure).
 
+You have local workspace file tools when files.read/files.write are enabled. If the task asks you to create or modify files, use write_file for full-file writes and patch_file for targeted edits. Do not claim you cannot access the filesystem when the file tools are available.
+
 Output ONLY the deliverable the user asked for:
 - Code-only task → output the complete working code, nothing else
 - Code + tests task → output the code, then the tests
@@ -91,7 +97,7 @@ Never output a PASS/FAIL verdict, findings list, or review commentary. The user 
     liveMode: false,
     agents: [
       mk('nova',  'Nova',  '#a06bff', 'command', 'command',
-        { status: 'active', schedule: 'always', sprite: 'octo', systemPrompt: 'You are Nova, the dispatcher. Patrol the office, route tasks to the right agent, and keep everyone in sync. For ANY coding or software task, always route it through the V-Model coding pipeline: Spec (requirements) → Forge (implementation) → Probe (verification). Hand non-coding work to the other specialists.', tools: ['memory', 'web.search'] }),
+        { status: 'active', schedule: 'always', sprite: 'octo', systemPrompt: NOVA_PROMPT, tools: ['memory', 'web.search'] }),
       mk('cobalt','Cobalt','#4d7cff', 'observatory', 'research',
         { status: 'active', schedule: 'every', everyHours: 21, sprite: 'person', systemPrompt: 'You are Cobalt, the observer. Catalogue incoming signals and summarise what you find.', tools: ['web.search', 'files.read'] }),
       mk('ember', 'Ember', '#ff4d6d', 'security', 'security',
@@ -99,19 +105,19 @@ Never output a PASS/FAIL verdict, findings list, or review commentary. The user 
       mk('rosa',  'Rosa',  '#ff5cae', 'research', 'research',
         { status: 'active', schedule: 'every', everyHours: 12, sprite: 'cat', systemPrompt: 'You are Rosa, the scientist. Form hypotheses and test ideas against the data.', tools: ['code.run', 'memory'] }),
       mk('sol',   'Sol',   '#ffd23f', 'workshop', 'build',
-        { status: 'idle', schedule: 'ondemand', sprite: 'car', systemPrompt: 'You are Sol, the builder. Turn plans into working artefacts.', tools: ['code.run', 'shell', 'files.write'] }),
+        { status: 'idle', schedule: 'ondemand', sprite: 'car', systemPrompt: SOL_PROMPT, tools: ['code.run', 'shell', 'files.read', 'files.write'] }),
       mk('clay',  'Clay',  '#ff9b4d', 'studio', 'studio',
-        { status: 'idle', schedule: 'ondemand', sprite: 'rocket', systemPrompt: 'You are Clay, the maker. Produce visuals and polish the final output.', tools: ['vision', 'files.write'] }),
+        { status: 'idle', schedule: 'ondemand', sprite: 'rocket', systemPrompt: CLAY_PROMPT, tools: ['vision', 'files.read', 'files.write'] }),
       // ── V-Model coding pipeline (locked system prompts, served by the LoRA backend) ──
       mk('req',  'Spec',  '#38bdf8', 'requirements', 'research',
         { status: 'ondemand', schedule: 'ondemand', sprite: 'person', locked: true, role2: 'requirements',
-          systemPrompt: SPEC_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.3, maxTokens: 4096, tools: [] }),
+          systemPrompt: SPEC_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.3, maxTokens: 4096, tools: ['files.read'] }),
       mk('code', 'Forge', '#a3e635', 'implementation', 'build',
         { status: 'ondemand', schedule: 'ondemand', sprite: 'robot', locked: true, role2: 'implementation',
-          systemPrompt: FORGE_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.2, maxTokens: 4096, tools: ['code.run'] }),
+          systemPrompt: FORGE_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.2, maxTokens: 4096, tools: ['code.run', 'files.read', 'files.write'] }),
       mk('test', 'Probe', '#fb7185', 'verification', 'security',
         { status: 'ondemand', schedule: 'ondemand', sprite: 'cat', locked: true, role2: 'verification',
-          systemPrompt: PROBE_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.3, maxTokens: 4096, tools: ['code.run'] }),
+          systemPrompt: PROBE_PROMPT, connection: { ...TRIO_CONN }, temperature: 0.3, maxTokens: 4096, tools: ['code.run', 'files.read'] }),
     ],
     connections: [
       { from: 'nova', to: 'cobalt' },
@@ -132,6 +138,7 @@ Never output a PASS/FAIL verdict, findings list, or review commentary. The user 
       lmstudio: { baseUrl: 'http://localhost:1234/v1', model: 'local-model' },
       openai:   { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' },
       anthropic:{ baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest', apiKey: '' },
+      tools:     { baseUrl: 'http://localhost:4173', enabled: true, maxRounds: 6 },
       lora:     { baseUrl: 'http://localhost:8000', dataset: 'agent_office', modelPath: '', adapterPath: '',
                   train: { run_name: '', num_train_epochs: 1, lora_r: 8, lora_alpha: 16, learning_rate: 2e-4, max_seq_length: 512 } },
       hub:      { proxyUrl: '', backendUrl: 'http://localhost:8000', localServerUrl: 'http://localhost:1234/v1', httpProxy: '', hubUrl: 'http://localhost:8001' },
@@ -155,6 +162,10 @@ const Store = (() => {
     if (!state.settings.lora) {
       state = { ...state, settings: { ...state.settings, lora: defaultState().settings.lora } };
     }
+    // migrate local Tool Bridge settings if missing
+    if (!state.settings.tools) {
+      state = { ...state, settings: { ...state.settings, tools: defaultState().settings.tools } };
+    }
     // migrate settings.lora.train (added with the Self-Improve view) if missing
     if (state.settings.lora && !state.settings.lora.train) {
       state = { ...state, settings: { ...state.settings, lora: { ...state.settings.lora, train: defaultState().settings.lora.train } } };
@@ -176,6 +187,39 @@ const Store = (() => {
     if (state.agents.some((a) => !Array.isArray(a.rules))) {
       state = { ...state, agents: state.agents.map((a) => Array.isArray(a.rules) ? a : { ...a, rules: [] }) };
     }
+    // migrate: give default build/code agents the new executable file chips
+    {
+      const requiredTools = {
+        sol: ['files.read', 'files.write'],
+        clay: ['files.read', 'files.write'],
+        req: ['files.read'],
+        code: ['files.read', 'files.write'],
+        test: ['files.read'],
+      };
+      if (state.agents.some((a) => requiredTools[a.id]?.some((t) => !(a.tools || []).includes(t)))) {
+        state = { ...state, agents: state.agents.map((a) => {
+          const reqTools = requiredTools[a.id];
+          if (!reqTools) return a;
+          return { ...a, tools: Array.from(new Set([...(a.tools || []), ...reqTools])) };
+        }) };
+      }
+    }
+    // migrate stock prompts so saved browsers learn how to plan/use file tools.
+    {
+      const oldPrompts = {
+        nova: 'You are Nova, the dispatcher. Patrol the office, route tasks to the right agent, and keep everyone in sync. For ANY coding or software task, always route it through the V-Model coding pipeline: Spec (requirements) → Forge (implementation) → Probe (verification). Hand non-coding work to the other specialists.',
+        sol: 'You are Sol, the builder. Turn plans into working artefacts.',
+        clay: 'You are Clay, the maker. Produce visuals and polish the final output.',
+      };
+      const newPrompts = { nova: NOVA_PROMPT, sol: SOL_PROMPT, clay: CLAY_PROMPT };
+      if (state.agents.some((a) => oldPrompts[a.id] && a.systemPrompt === oldPrompts[a.id])) {
+        state = { ...state, agents: state.agents.map((a) => (
+          oldPrompts[a.id] && a.systemPrompt === oldPrompts[a.id]
+            ? { ...a, systemPrompt: newPrompts[a.id] }
+            : a
+        )) };
+      }
+    }
     // migrate req/code/test: fix provider from 'lora' → 'lmstudio' (pre-training default)
     // and ensure locked:true is set (added in Phase 2)
     if (state.agents.some((a) => ['req','code','test'].includes(a.id) && (a.connection?.provider === 'lora' || !a.locked))) {
@@ -195,7 +239,7 @@ const Store = (() => {
       const def = defaultState();
       const SENTINELS = {
         req:  'DELIVERABLE FORMAT:',
-        code: 'They override all defaults',
+        code: 'write_file for full-file writes',
         test: 'give them exactly what they asked for',
       };
       if (state.agents.some((a) => SENTINELS[a.id] && !(a.systemPrompt || '').includes(SENTINELS[a.id]))) {
@@ -369,6 +413,10 @@ async function callModel(agent, userContent, { settings, liveMode } = {}) {
   if (!liveMode || prov === 'demo') return simulate(agent, userContent);
   const modelId = conn.model || cfg.model || '?';
   const snippet = (s) => String(s || '').slice(0, 90) + (String(s || '').length > 90 ? '…' : '');
+  const toolSchemas = (settings?.tools?.enabled !== false && typeof getAgentToolSchemas === 'function')
+    ? getAgentToolSchemas(agent)
+    : [];
+  const maxToolRounds = Math.max(1, Math.min(12, Number(settings?.tools?.maxRounds || 6)));
   Store.log(`[LIVE] → ${agent.name} [${prov}/${modelId}] "${snippet(userContent)}"`, '#5cc8ff');
   try {
     let result;
@@ -424,13 +472,46 @@ async function callModel(agent, userContent, { settings, liveMode } = {}) {
     } else {
       // openai-compatible: openai + lmstudio
       const base = conn.baseUrl || cfg.baseUrl || 'http://localhost:1234/v1';
-      const r = await fetch(base.replace(/\/$/, '') + '/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { authorization: 'Bearer ' + cfg.apiKey } : {}) },
-        body: JSON.stringify({ model: conn.model || cfg.model, temperature: agent.temperature, max_tokens: agent.maxTokens, messages }),
-      });
-      const j = await r.json();
-      result = j?.choices?.[0]?.message?.content || JSON.stringify(j);
+      const headers = { 'content-type': 'application/json', ...(cfg.apiKey ? { authorization: 'Bearer ' + cfg.apiKey } : {}) };
+      for (let round = 0; round < maxToolRounds; round++) {
+        const body = {
+          model: conn.model || cfg.model,
+          temperature: agent.temperature,
+          max_tokens: agent.maxTokens,
+          messages,
+          ...(toolSchemas.length ? { tools: toolSchemas, tool_choice: 'auto' } : {}),
+        };
+        const r = await fetch(base.replace(/\/$/, '') + '/chat/completions', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        const msg = j?.choices?.[0]?.message;
+        const calls = msg?.tool_calls || [];
+        if (!calls.length) {
+          result = msg?.content || JSON.stringify(j);
+          break;
+        }
+
+        messages.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
+        for (const tc of calls) {
+          const name = tc?.function?.name || '';
+          let args = {};
+          try { args = JSON.parse(tc?.function?.arguments || '{}'); }
+          catch (e) { args = {}; }
+          Store.log(`[TOOL] ${agent.name} → ${name}`, agent.color);
+          const content = await executeAgentTool(name, args, { settings });
+          Store.log(`[TOOL] ${name} ← ${snippet(content)}`, '#5cc8ff');
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name,
+            content,
+          });
+        }
+      }
+      if (!result) result = '[tool loop stopped] The agent reached the tool-call round limit before producing a final answer.';
     }
     Store.log(`[LIVE] ← ${agent.name} (${modelId}): "${snippet(result)}"`, '#2ee6a6');
     return result;

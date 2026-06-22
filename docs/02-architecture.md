@@ -18,12 +18,14 @@ consume them:
 react / react-dom / @babel/standalone        (CDN)
 lib/tweaks-panel.jsx     → useTweaks, TweaksPanel, Tweak* controls
 lib/sprites.jsx          → PixelSprite, SPRITES, SPRITE_LIST, shade, lighten, decor
+lib/tools.jsx            → local Tool Bridge schemas + browser dispatch helpers
 lib/store.jsx            → Store, useStore, callModel, ROOM_THEMES, TOOL_LIBRARY, SIM_ACTIONS
 lib/engine.jsx           → startEngine, runTask, triggerVisit, pipelineFrom
 lib/office.jsx           → OfficeView
 lib/editor.jsx           → EditorDrawer, SettingsDrawer
 lib/tasks.jsx            → TasksView
 lib/connections.jsx      → ConnectionsView
+lib/learning.jsx         → SelfImproveView
 lib/app.jsx              → defines <App/> and calls ReactDOM.createRoot(...).render()
 ```
 
@@ -72,6 +74,21 @@ user input / engine tick
 `useStore` is intentionally coarse: any store change re-renders every subscriber.
 The app is small enough that this is fine. If it grows, add selector-based
 memoisation inside `useStore`.
+
+## Local Tool Bridge
+
+The browser cannot directly read arbitrary folders, write files, or run external
+MCP clients. Real file tools therefore go through the local Node server in
+`.claude/serve.js`. When launched with `node .claude/serve.js`, it serves the app
+and exposes `POST /api/tools/call` plus `GET /api/tools/status`.
+
+`lib/tools.jsx` maps an agent's tool chips to OpenAI-compatible function schemas:
+agents with `files.read` get `list_dir`, `read_file`, and `search_files`; agents
+with `files.write` get `write_file` and `patch_file`. `callModel()` sends those
+schemas to LM Studio/OpenAI-compatible providers and loops over returned
+`tool_calls`, appending `role:"tool"` results until the model produces final text.
+
+All bridge file paths are scoped to this repository's workspace root.
 
 ## Transient vs persisted state
 
