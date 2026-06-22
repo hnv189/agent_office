@@ -6,8 +6,10 @@
 build step. Everything (UI, state, the logic that decides what to send to a model)
 runs in your browser, and state is saved in `localStorage`.
 
-The only "server" you start locally is a **static file server** — it just hands the
-files to the browser. It contains zero application logic.
+The normal "server" you start locally is a **static file server** — it just hands
+the files to the browser. If you want agents to use local file tools, use the
+included Node server instead; it serves the app and exposes a small localhost
+Tool Bridge scoped to this project folder.
 
 The actual AI inference happens in an **external model backend** that you choose per
 agent. The browser calls it directly:
@@ -55,11 +57,17 @@ AGENTS.md
 HOW-TO-RUN.md   ← this file
 ```
 
-## Step 2 — Start a static server in that folder
+## Step 2 — Start a local server in that folder
 
-Open a terminal, `cd` into the folder, and run **one** of these:
+Open a terminal, `cd` into the folder, and run **one** of these.
 
-**Python**
+**Recommended (app + local file tools)**
+```
+cd ~/agent-playground
+node .claude/serve.js
+```
+
+**Static preview only**
 ```
 cd ~/agent-playground
 python3 -m http.server 8000
@@ -78,11 +86,15 @@ Leave that terminal running.
 In your browser, go to:
 
 ```
-http://localhost:8000/Agent%20Playground.html
+http://localhost:4173
 ```
 
 It works right away in **Demo mode** (agents are simulated — nothing leaves your
 browser). You can create/edit agents, wire connections, and run tasks immediately.
+
+If you used the Python static server instead, open
+`http://localhost:8000/Agent%20Playground.html`; local file tools will show
+offline in Settings.
 
 ---
 
@@ -117,6 +129,7 @@ with `[offline — simulated]`, so it never hard-breaks.
 | **Live calls fail to LM Studio** | Server not started, or **CORS not enabled** in LM Studio, or wrong base URL/model name. |
 | **`localhost` unreachable** | You're running it on a *hosted* preview, not your own machine. Live mode only works locally. |
 | **Port 8000 in use** | Use another port, e.g. `python3 -m http.server 8080`, then open `:8080`. |
+| **Tool Bridge offline** | Start `node .claude/serve.js` and open `http://localhost:4173`. |
 | **Scheduled "every N hours" never fires** | Expected — it's a frontend prototype with no background server; it only ticks while the tab is open. |
 
 ---

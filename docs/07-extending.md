@@ -51,9 +51,16 @@ Demo-mode fallback (doc 04) intact.
 
 ## Add a tool / capability
 
-`TOOL_LIBRARY` in `store.jsx` is the master list shown as chips in the editor. Tools
-are currently **labels** (UI + intent), not executed. To make a tool *do* something,
-gate logic inside `runTask` / `callModel` on `agent.tools.includes('toolName')`.
+`TOOL_LIBRARY` in `store.jsx` is the master list shown as chips in the editor.
+Some chips are still labels, but `files.read` and `files.write` are executable:
+`lib/tools.jsx` turns them into OpenAI-compatible schemas and dispatches calls to
+the local Tool Bridge in `.claude/serve.js`.
+
+To add another executable tool:
+1. Add the visible chip to `TOOL_LIBRARY` if needed.
+2. Add a schema in `lib/tools.jsx` and expose it from `getAgentToolSchemas(agent)`.
+3. Add a matching handler to `.claude/serve.js` or another local backend endpoint.
+4. Keep paths/side effects scoped and return compact JSON strings.
 
 ## Make image tasks reach the model (vision)
 
@@ -81,12 +88,14 @@ Add a key to `TWEAK_DEFAULTS` in `app.jsx`, render a `Tweak*` control inside
 | File | Exports |
 |------|---------|
 | `sprites.jsx` | `PixelSprite, SPRITES, SPRITE_LIST, shade, lighten, Zzz, SpeechBubble, MessengerDot, MonitorWall, RoomFloor` |
+| `tools.jsx` | `TOOL_BRIDGE_DEFAULT, getAgentToolSchemas, executeAgentTool` |
 | `store.jsx` | `Store, useStore, callModel, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY` |
 | `engine.jsx` | `startEngine, runTask, triggerVisit, pipelineFrom` |
 | `office.jsx` | `OfficeView` |
 | `editor.jsx` | `EditorDrawer, SettingsDrawer` |
 | `tasks.jsx` | `TasksView` |
 | `connections.jsx` | `ConnectionsView` |
+| `learning.jsx` | `SelfImproveView` |
 | `tweaks-panel.jsx` | `useTweaks, TweaksPanel, TweakSection, TweakSlider, TweakToggle, TweakRadio, TweakSelect, TweakText, TweakNumber, TweakColor, TweakButton` |
 
 ## Gotchas

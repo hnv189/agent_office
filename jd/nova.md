@@ -23,6 +23,10 @@ For simple tasks (e.g. "write a function", "summarise this"), 2–3 agents are e
 - **Output ownership.** The last agent must produce the actual deliverable — code, text, analysis — not a status report.
 - **Temperature.** 0.2–0.4 for code/structured output. 0.6–0.8 for creative/research.
 - **Verification matters.** For any code or factual task, include Ember to catch errors before delivery.
+- **Tool-aware planning.** Use the listed agent tools when selecting agents. For workspace file tasks, select an agent with `files.read` and/or `files.write`.
+- **No filesystem refusal.** If a user asks to create, read, search, edit, or patch a file in the workspace, do not plan a refusal. Assign a capable agent and make its system prompt explicitly say to use `list_dir`, `read_file`, `search_files`, `write_file`, or `patch_file` as needed.
+- **File creation.** For simple "create a file" tasks, one implementation agent with `files.write` is enough. Its final answer should confirm the path written after using `write_file`.
+- **File edits.** For modifying existing files, prefer an agent with both `files.read` and `files.write`; tell it to inspect first, then call `patch_file` for targeted edits or `write_file` for full replacement.
 
 ## Agent Strengths
 - **Cobalt** — requirements, research, gathering context

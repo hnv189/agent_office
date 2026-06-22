@@ -330,6 +330,63 @@ function LoraSettings() {
   );
 }
 
+function ToolBridgeSettings() {
+  const [s] = useStore();
+  const cfg = s.settings.tools || {};
+  const setTools = (patch) => Store.set((st) => ({
+    ...st,
+    settings: { ...st.settings, tools: { ...st.settings.tools, ...patch } },
+  }));
+  const [status, setStatus] = React.useState(null);
+  const [workspace, setWorkspace] = React.useState('');
+
+  const base = (cfg.baseUrl || TOOL_BRIDGE_DEFAULT).replace(/\/$/, '');
+  const probe = React.useCallback(async () => {
+    setStatus('checking');
+    try {
+      const r = await fetch(base + '/api/tools/status', { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) throw new Error('offline');
+      const j = await r.json();
+      setWorkspace(j.workspaceRoot || '');
+      setStatus('ok');
+    } catch {
+      setWorkspace('');
+      setStatus('fail');
+    }
+  }, [base]);
+
+  React.useEffect(() => { probe(); }, [probe]);
+
+  return (
+    <>
+      <div className="sect-l">Tool Bridge · local files</div>
+      <div className={'mode-card' + (cfg.enabled === false ? '' : ' live')}>
+        <div>
+          <b>{cfg.enabled === false ? 'Tools disabled' : 'Tools enabled'}</b>
+          <p className="muted">Agents with file tool chips can ask the local bridge to list, read, search, write, and patch workspace files.</p>
+        </div>
+        <button className={'switch' + (cfg.enabled === false ? '' : ' on')} onClick={() => setTools({ enabled: cfg.enabled === false })}><i /></button>
+      </div>
+      <Field label="Bridge URL">
+        <input className="inp" value={cfg.baseUrl || ''} placeholder={TOOL_BRIDGE_DEFAULT}
+          onChange={(e) => setTools({ baseUrl: e.target.value })} />
+      </Field>
+      <div className="lora-status-row">
+        <div className={`lora-pill ${status || 'idle'}`}>
+          <i />
+          {status === 'checking' ? 'checking...'
+            : status === 'ok' ? 'bridge online'
+            : status === 'fail' ? 'not reachable'
+            : 'not checked'}
+        </div>
+        <button className="btn sm ghost" onClick={probe}>Refresh</button>
+      </div>
+      {workspace && <p className="note">Workspace: <code>{workspace}</code></p>}
+      {status === 'fail' && <p className="note">Start it with <code>node .claude/serve.js</code>, then open the app from that server.</p>}
+    </>
+  );
+}
+
 function SettingsDrawer() {
   const [s] = useStore();
   const open = !!s.settingsOpen;
@@ -359,6 +416,7 @@ function SettingsDrawer() {
       <Field label="API key"><input className="inp" type="password" placeholder="sk-ant-…" value={s.settings.anthropic.apiKey} onChange={(e) => set('anthropic', { apiKey: e.target.value })} /></Field>
       <Field label="Default model"><input className="inp" value={s.settings.anthropic.model} onChange={(e) => set('anthropic', { model: e.target.value })} /></Field>
 
+      <ToolBridgeSettings />
       <LoraSettings />
     </Drawer>
   );

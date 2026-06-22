@@ -7,7 +7,7 @@ This file is the entry point for any AI agent (or developer) working on the
 
 ## What this project is
 
-Agent Playground is a **single-page, front-end-only web app** that visualises a
+Agent Playground is a **single-page web app** that visualises a
 team of AI agents as little pixel-art creatures living in a retro "Mission
 Control" office. Each agent has its own themed room. When an agent is working it
 **walks around and shows a speech bubble**; when idle it **sits and sleeps
@@ -22,16 +22,19 @@ It runs in two modes:
   (**LM Studio**, **OpenAI**, **Anthropic**). Only works when the file is opened
   from the user's own machine (a hosted sandbox cannot reach `localhost`).
 
-There is **no server and no build step**. It is plain HTML + React (via in-browser
-Babel) + CSS. All state lives in the browser's `localStorage`.
+There is **no build step**. The core UI is plain HTML + React (via in-browser
+Babel) + CSS, and state lives in the browser's `localStorage`. Real local file
+tools use the optional Node server in `.claude/serve.js`, which also serves the
+static app and exposes a small localhost Tool Bridge scoped to this project
+folder.
 
 ---
 
 ## How to run it
 
-Just open `Agent Playground.html` in a browser. For Live mode against LM Studio,
-start LM Studio's server on `http://localhost:1234` **with CORS enabled**, then
-flip Demo → Live in the app's Settings.
+Run `node .claude/serve.js`, then open `http://localhost:4173`. For Live mode
+against LM Studio, start LM Studio's server on `http://localhost:1234` **with CORS
+enabled**, then flip Demo → Live in the app's Settings.
 
 ---
 
@@ -42,6 +45,7 @@ Agent Playground.html     # the only HTML file; loads React + Babel + all lib/*.
 lib/
   tweaks-panel.jsx        # 3rd-party-style Tweaks panel shell (do not rewrite)
   sprites.jsx             # pixel-art sprite engine + room decor primitives
+  tools.jsx               # tool schemas + browser dispatch to the Tool Bridge
   store.jsx               # global state, defaults, persistence, model-call layer
   engine.jsx              # simulation loop, room-to-room visits, task pipeline runner
   office.jsx              # the main "Agent Office" view
@@ -61,9 +65,9 @@ docs/                     # reference documentation (read these)
 Each `<script type="text/babel">` file is compiled in its own scope, so **shared
 symbols are exported onto `window`** at the bottom of each file via
 `Object.assign(window, { ... })`. Files are loaded in **dependency order** in the
-HTML (`sprites → store → engine → office/editor/tasks/connections → app`). If you
-add a file, export its public symbols and insert the `<script>` tag in the right
-place.
+HTML (`sprites → tools → store → engine → office/editor/tasks/connections/learning
+→ app`). If you add a file, export its public symbols and insert the `<script>`
+tag in the right place.
 
 State is **not** React context. There is one vanilla pub/sub store (`window.Store`)
 and a thin hook (`useStore`) that re-renders subscribers on any change. Mutate

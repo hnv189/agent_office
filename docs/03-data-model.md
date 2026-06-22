@@ -17,6 +17,7 @@ to `localStorage` key **`agentPlayground.v1`**.
     lmstudio:  { baseUrl: 'http://localhost:1234/v1', model: 'local-model' },
     openai:    { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' },
     anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest', apiKey: '' },
+    tools:     { baseUrl: 'http://localhost:4173', enabled: true, maxRounds: 6 },
   },
   ticker: [ { t: epochMs, msg: string, color: hex }, … ],   // newest first, capped at 40
   visits: [ Visit, … ],   // TRANSIENT — never persisted
@@ -82,6 +83,8 @@ to `localStorage` key **`agentPlayground.v1`**.
 - **`ROOM_THEMES`** — `{ command, observatory, security, research, workshop, studio }`,
   each `{ label, theme }` (uppercase label + accent hex).
 - **`TOOL_LIBRARY`** — `['web.search','files.read','files.write','shell','memory','vision','code.run','email']`.
+  `files.read` and `files.write` now enable real local file tool schemas when the
+  Tool Bridge is online.
 - **`SIM_ACTIONS`** — speech-bubble phrase pools keyed by `role`
   (`general, research, security, command, build, studio`).
 
