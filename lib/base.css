@@ -1,5 +1,8 @@
 /* base.css — tokens, shell, sidebar, office */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Silkscreen:wght@400;700&display=swap');
+/* Google Fonts removed so the app works fully offline / behind a proxy.
+   The font-family vars below fall back to system-ui / monospace. To re-enable
+   the original webfonts, restore this @import (needs internet):
+   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Silkscreen:wght@400;700&display=swap'); */
 
 :root{
   --bg:#070a14; --bg2:#0b0f1e; --panel:#0e1426; --panel2:#121a30;

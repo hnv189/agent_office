@@ -525,6 +525,57 @@ function LocalSettings() {
   );
 }
 
+function ToolBridgeSettings() {
+  const [s] = useStore();
+  const cfg = s.settings.tools || {};
+  const base = (cfg.baseUrl || (typeof TOOL_BRIDGE_DEFAULT !== 'undefined' ? TOOL_BRIDGE_DEFAULT : 'http://localhost:4173')).replace(/\/$/, '');
+  const setTools = (patch) => Store.set((st) => ({
+    ...st, settings: { ...st.settings, tools: { ...(st.settings.tools || {}), ...patch } },
+  }));
+
+  const [status, setStatus] = React.useState('idle'); // idle | checking | ok | fail
+  const [toolList, setToolList] = React.useState([]);
+
+  const probe = React.useCallback(async () => {
+    setStatus('checking');
+    try {
+      const r = await fetch(base + '/api/tools/status', { signal: AbortSignal.timeout(4000) });
+      if (r.ok) { const j = await r.json(); setToolList(j.tools || []); setStatus('ok'); }
+      else { setToolList([]); setStatus('fail'); }
+    } catch { setToolList([]); setStatus('fail'); }
+  }, [base]);
+
+  React.useEffect(() => { probe(); }, [probe]);
+
+  return (
+    <>
+      <div className="sect-l">Tool Bridge · agent tools</div>
+      <div className="mode-card">
+        <div>
+          <b>Enable tool calling</b>
+          <p className="muted">Let agents call file, shell, code, web, memory &amp; skill tools via the local bridge.</p>
+        </div>
+        <button className={'switch' + (cfg.enabled !== false ? ' on' : '')} onClick={() => setTools({ enabled: cfg.enabled === false })}><i /></button>
+      </div>
+      <Field label="Bridge URL" hint="node .claude/serve.js">
+        <input className="inp" value={cfg.baseUrl || base} placeholder="http://localhost:4173"
+          onChange={(e) => setTools({ baseUrl: e.target.value })} />
+      </Field>
+      <Field label={`Max tool rounds · ${cfg.maxRounds || 6}`}>
+        <input type="range" className="range" min={1} max={12} step={1} value={cfg.maxRounds || 6} onChange={(e) => setTools({ maxRounds: Number(e.target.value) })} />
+      </Field>
+      <div className="lora-status-row">
+        <div className={`lora-pill ${status === 'ok' ? 'ok' : status === 'fail' ? 'fail' : status === 'checking' ? 'idle' : 'idle'}`}>
+          <i />
+          {status === 'checking' ? 'checking…' : status === 'ok' ? `online · ${toolList.length} tools` : status === 'fail' ? 'offline — run serve.js' : 'not checked'}
+        </div>
+        <button className="btn sm ghost" onClick={probe}>↺ Check</button>
+      </div>
+      {status === 'fail' && <p className="note">Start the bridge with <code>node .claude/serve.js</code> and open the app at <code>{base}</code>. Without it, agents fall back to text-only answers.</p>}
+    </>
+  );
+}
+
 function SettingsDrawer() {
   const [s] = useStore();
   const open = !!s.settingsOpen;
