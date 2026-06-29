@@ -608,6 +608,19 @@ Valid agentId values: req, code, test.`;
 // The V-Model coding trio whose traces feed learning.
 const TRIO_IDS = ['req', 'code', 'test'];
 
+// Robust JSON extraction from a model response (handles ```fences``` and bare objects/arrays).
+function extractJSON(resp) {
+  if (!resp) return null;
+  const fenced = resp.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) { try { return JSON.parse(fenced[1].trim()); } catch {} }
+  // try the largest object or array
+  const obj = resp.match(/\{[\s\S]*\}/);
+  if (obj) { try { return JSON.parse(obj[0]); } catch {} }
+  const arr = resp.match(/\[[\s\S]*\]/);
+  if (arr) { try { return JSON.parse(arr[0]); } catch {} }
+  return null;
+}
+
 // Tasks that qualify as training/analysis material: completed, have a trace,
 // have feedback at or above the rating threshold.
 function qualifyingTasks(tasks, { threshold = 3, includeExported = false } = {}) {
@@ -722,4 +735,200 @@ Return ONLY this JSON, nothing else:
   }
 }
 
-Object.assign(window, { useStore, Store, callModel, buildSystemPrompt, analyzeAndAssignRule, buildTrainingRecords, runGEPA, qualifyingTasks, TRIO_IDS, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY });
+// ── Hermes-style GEPA loop (Genetic-Pareto skill evolution) ────────────────
+// Mirrors NousResearch/hermes-agent-self-evolution: instead of one-shot rule
+// editing (runGEPA above), this runs the full evolutionary loop:
+//   1. Reflective failure analysis — read traces, write "why it failed" notes
+//   2. Candidate generation — propose K diverse skill-set variants (mutations)
+//   3. Multi-objective evaluation — LLM-as-judge rubric scores each variant on
+//      success (would it prevent the failures?) × conciseness; bloat measured
+//      locally as a length penalty
+//   4. Pareto selection — pick the non-dominated winner (max success, min bloat)
+// Returns { analysis, candidates:[{id,label,strategy,rules,scores}], winnerId,
+//           paretoFront:[ids], samples } or null. No weights are touched — this
+//           is prompt-level (rules[]) evolution, shipped only after human review.
+
+const GEPA_K = 4; // number of candidate variants per evolution round
+
+// local bloat metric: total characters across a rule set, normalised 0..1
+function ruleSetBloat(rules) {
+  const chars = rules.reduce((n, r) => n + String(r).length, 0);
+  // ~600 chars (≈ a dozen tight rules) maps to ~1.0
+  return Math.min(1, chars / 600);
+}
+
+// Pareto: candidate A dominates B if A.success >= B.success AND A.bloat <= B.bloat
+// with at least one strict. Returns the set of non-dominated candidate ids.
+function paretoFront(cands) {
+  const ids = [];
+  for (const a of cands) {
+    const dominated = cands.some((b) =>
+      b !== a &&
+      b.scores.success >= a.scores.success &&
+      b.scores.bloat <= a.scores.bloat &&
+      (b.scores.success > a.scores.success || b.scores.bloat < a.scores.bloat)
+    );
+    if (!dominated) ids.push(a.id);
+  }
+  return ids;
+}
+
+async function runHermesGEPA(agentId, { tasks, agents, settings, liveMode, k = GEPA_K } = {}) {
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) return null;
+
+  // gather this agent's feedback-bearing runs (same source as runGEPA)
+  const samples = [];
+  for (const t of (tasks || [])) {
+    if (t.status !== 'done' || !Array.isArray(t.trace) || !t.feedback) continue;
+    const step = t.trace.find((s) => s.agentId === agentId);
+    if (!step) continue;
+    samples.push({
+      task: t.title,
+      rating: t.feedback.rating,
+      notes: t.feedback.notes || '',
+      weakLink: t.feedback.weakLink || '',
+      input: String(step.user || '').slice(0, 300),
+      output: String(step.assistant || step.output || '').slice(0, 400),
+    });
+  }
+  if (samples.length < 1) return null;
+
+  const current = (agent.rules || []);
+  const currentText = current.map((r, i) => `${i + 1}. ${r.text}${r.confirmed ? ' [PROVEN — keep]' : ''}`).join('\n') || '(none yet)';
+  const role = (agent.systemPrompt || '').slice(0, 300);
+  const sampleBlock = samples.map((s, i) =>
+    `RUN ${i + 1} — rating ${s.rating}/5${s.weakLink ? ` (user flagged: ${s.weakLink})` : ''}\n  Input: ${s.input}\n  Produced: ${s.output}\n  Feedback: ${s.notes || '(none)'}`
+  ).join('\n\n');
+
+  // Offline / demo: no model — degrade to current rules as the single candidate.
+  if (!liveMode) {
+    const rules = current.map((r) => r.text);
+    const cand = { id: 'c0', label: 'Current (offline)', strategy: 'unchanged', rules,
+      scores: { success: 50, clarity: 50, bloat: ruleSetBloat(rules), rationale: 'Live mode off — Hermes GEPA needs a model to analyse, mutate and judge.' } };
+    return { analysis: 'Live mode off — showing current rules unchanged. Enable Live + a backend to run the full evolutionary loop.',
+      candidates: [cand], winnerId: 'c0', paretoFront: ['c0'], samples: samples.length };
+  }
+
+  const nova = agents.find((a) => a.id === 'nova') || agents[0];
+  const jsonModel = (sys) => ({ ...nova, systemPrompt: sys || 'You output only valid JSON. No prose, no markdown fences, just the JSON value.' });
+
+  // ── Stage 1: reflective failure analysis ────────────────────────────────
+  let analysis = '';
+  try {
+    const aPrompt = `You are GEPA's reflective analyser for the agent "${agent.name}".
+Role: ${role}
+
+CURRENT RULES:
+${currentText}
+
+EXECUTION HISTORY (${samples.length} runs):
+${sampleBlock}
+
+Read the traces and explain WHY low-rated runs failed — the recurring failure MODES, not just symptoms. Be concrete and grounded in the runs above.
+Return ONLY JSON: {"analysis":"2-3 sentences on the root failure modes","modes":["short failure mode 1","short failure mode 2"]}`;
+    const aResp = await callModel(jsonModel(), aPrompt, { settings, liveMode });
+    const aJson = extractJSON(aResp);
+    analysis = (aJson && aJson.analysis) ? aJson.analysis : 'Analysed execution traces for recurring failure modes.';
+  } catch { analysis = 'Analysed execution traces for recurring failure modes.'; }
+
+  // ── Stage 2: candidate generation (K diverse variants) ──────────────────
+  let variants = [];
+  try {
+    const STRATEGIES = ['minimal (fewest, sharpest rules)', 'comprehensive (cover every failure mode)', 'refine-existing (keep structure, sharpen wording)', 'aggressive-merge (collapse overlaps, drop weak rules)'].slice(0, k);
+    const gPrompt = `You are GEPA's mutation engine for the agent "${agent.name}".
+Role: ${role}
+
+FAILURE ANALYSIS: ${analysis}
+
+CURRENT RULES:
+${currentText}
+
+EXECUTION HISTORY:
+${sampleBlock}
+
+Produce ${k} DISTINCT candidate rule-sets, one per strategy below. Each must directly address the failure modes. ALWAYS keep any rule marked [PROVEN — keep]. Each rule ≤20 words, imperative, specific. Prefer fewer, stronger rules.
+
+Strategies (use exactly these, in order):
+${STRATEGIES.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+
+Return ONLY JSON array of ${k} objects:
+[{"strategy":"<the strategy>","rules":["rule 1","rule 2"]}]`;
+    const gResp = await callModel(jsonModel(), gPrompt, { settings, liveMode });
+    const gJson = extractJSON(gResp);
+    if (Array.isArray(gJson)) {
+      variants = gJson.map((v) => ({
+        strategy: String(v.strategy || 'variant'),
+        rules: (Array.isArray(v.rules) ? v.rules : []).map((r) => String(r).trim()).filter(Boolean).slice(0, 12),
+      })).filter((v) => v.rules.length);
+    }
+  } catch {}
+  // always include the current set as a baseline candidate
+  variants.unshift({ strategy: 'current (baseline)', rules: current.map((r) => r.text) });
+  // de-dup identical rule-sets, drop empties (keep baseline even if empty)
+  const seen = new Set();
+  variants = variants.filter((v, i) => {
+    const key = v.rules.join('||');
+    if (i > 0 && (!v.rules.length || seen.has(key))) return false;
+    seen.add(key); return true;
+  });
+  if (variants.length < 2) return null; // nothing meaningful to choose between
+
+  const candidates = variants.map((v, i) => ({
+    id: 'c' + i,
+    label: i === 0 ? 'Baseline' : `Variant ${i}`,
+    strategy: v.strategy,
+    rules: v.rules,
+    scores: { success: 0, clarity: 0, bloat: ruleSetBloat(v.rules), rationale: '' },
+  }));
+
+  // ── Stage 3: multi-objective evaluation (LLM-as-judge rubric) ────────────
+  await Promise.all(candidates.map(async (c) => {
+    try {
+      const jPrompt = `You are GEPA's judge for the agent "${agent.name}".
+Role: ${role}
+
+Evaluate this CANDIDATE rule-set against the agent's real failure history. Would these rules, if injected into the agent's prompt, have PREVENTED the complaints below?
+
+CANDIDATE RULES (strategy: ${c.strategy}):
+${c.rules.length ? c.rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(no rules)'}
+
+FAILURE HISTORY:
+${sampleBlock}
+
+Score on a rubric:
+- success (0-100): how well these rules prevent the documented failures / satisfy the feedback
+- clarity (0-100): how specific, testable and unambiguous the rules are (penalise vague or contradictory rules)
+
+Return ONLY JSON: {"success":<int>,"clarity":<int>,"rationale":"one sentence"}`;
+      const jResp = await callModel(jsonModel(), jPrompt, { settings, liveMode });
+      const j = extractJSON(jResp) || {};
+      c.scores.success = Math.max(0, Math.min(100, Number(j.success) || 0));
+      c.scores.clarity = Math.max(0, Math.min(100, Number(j.clarity) || 0));
+      c.scores.rationale = String(j.rationale || '').slice(0, 200);
+    } catch {
+      c.scores.success = 0; c.scores.clarity = 0; c.scores.rationale = 'evaluation failed';
+    }
+  }));
+
+  // ── Stage 4: Pareto selection (max success, min bloat) ───────────────────
+  const front = paretoFront(candidates);
+  // winner = highest success on the Pareto front; tie-break: lower bloat, then higher clarity
+  const winner = candidates
+    .filter((c) => front.includes(c.id))
+    .sort((a, b) =>
+      b.scores.success - a.scores.success ||
+      a.scores.bloat - b.scores.bloat ||
+      b.scores.clarity - a.scores.clarity
+    )[0];
+
+  return {
+    analysis,
+    candidates,
+    winnerId: winner ? winner.id : candidates[0].id,
+    paretoFront: front,
+    samples: samples.length,
+  };
+}
+
+Object.assign(window, { useStore, Store, callModel, buildSystemPrompt, analyzeAndAssignRule, buildTrainingRecords, runGEPA, runHermesGEPA, paretoFront, ruleSetBloat, qualifyingTasks, TRIO_IDS, SIM_ACTIONS, ROOM_THEMES, TOOL_LIBRARY });

@@ -10,72 +10,125 @@ function cleanRecords(records) {
   return records.map(({ messages }) => ({ messages }));
 }
 
-// ── GEPA: evolve one agent's rule set from all its traces ──────────────────
+// ── Hermes-style GEPA: evolve → judge → Pareto-select → review ──────────────
+// Mirrors NousResearch/hermes-agent-self-evolution: reflective failure analysis,
+// K candidate skill variants, multi-objective (success × conciseness) judging,
+// Pareto selection, then human review before the winner ships into agent.rules[].
 function GepaPanel() {
   const [s] = useStore();
   const trio = s.agents.filter((a) => TRIO_IDS.includes(a.id));
   const [agentId, setAgentId] = React.useState(trio[0]?.id || '');
   const [phase, setPhase] = React.useState('idle'); // idle | running | review
-  const [proposed, setProposed] = React.useState([]);
-  const [rationale, setRationale] = React.useState('');
-  const [sampleCount, setSampleCount] = React.useState(0);
+  const [result, setResult] = React.useState(null);  // full runHermesGEPA result
+  const [pickedId, setPickedId] = React.useState(''); // candidate the user selected
+  const [editRules, setEditRules] = React.useState([]); // editable copy of picked rules
+  const [stage, setStage] = React.useState('');       // progress label during run
 
   const agent = s.agents.find((a) => a.id === agentId);
   const current = (agent?.rules || []);
 
-  // how many feedback-bearing runs touch this agent
   const available = s.tasks.filter((t) =>
     t.status === 'done' && Array.isArray(t.trace) && t.feedback &&
     t.trace.some((st) => st.agentId === agentId)).length;
 
-  const run = async () => {
-    setPhase('running');
-    const res = await runGEPA(agentId, { tasks: s.tasks, agents: s.agents, settings: s.settings, liveMode: s.liveMode });
-    if (!res) { setPhase('idle'); Store.log('◈ GEPA: not enough trace data to evolve rules yet', '#ffd23f'); return; }
-    setProposed(res.proposed);
-    setRationale(res.rationale);
-    setSampleCount(res.samples);
-    setPhase('review');
+  const selectCandidate = (res, id) => {
+    setPickedId(id);
+    const c = res.candidates.find((x) => x.id === id);
+    setEditRules(c ? [...c.rules] : []);
   };
 
-  const editProposed = (i, v) => setProposed((p) => p.map((x, j) => j === i ? v : x));
-  const removeProposed = (i) => setProposed((p) => p.filter((_, j) => j !== i));
-  const addProposed = () => setProposed((p) => [...p, '']);
+  const run = async () => {
+    setPhase('running'); setStage('◈ analysing traces → mutating → judging → Pareto…');
+    const res = await runHermesGEPA(agentId, { tasks: s.tasks, agents: s.agents, settings: s.settings, liveMode: s.liveMode });
+    if (!res) { setPhase('idle'); Store.log('◈ GEPA: not enough trace data to evolve rules yet', '#ffd23f'); return; }
+    setResult(res);
+    selectCandidate(res, res.winnerId);
+    setPhase('review');
+    Store.log(`⟳ GEPA evolved ${res.candidates.length} candidate(s) for ${agent.name} · ${res.paretoFront.length} on Pareto front`, '#a06bff');
+  };
+
+  const editRule = (i, v) => setEditRules((p) => p.map((x, j) => j === i ? v : x));
+  const removeRule = (i) => setEditRules((p) => p.filter((_, j) => j !== i));
+  const addRule = () => setEditRules((p) => [...p, '']);
 
   const apply = () => {
-    const clean = proposed.map((t) => t.trim()).filter(Boolean);
+    const clean = editRules.map((t) => t.trim()).filter(Boolean);
     Store.applyGEPA(agentId, clean);
-    Store.log(`⟳ GEPA evolved ${agent.name}'s rules → ${clean.length} rule(s)`, '#a06bff');
-    setPhase('idle'); setProposed([]);
+    Store.log(`⟳ GEPA shipped ${agent.name}'s evolved skill-set → ${clean.length} rule(s)`, '#2ee6a6');
+    setPhase('idle'); setResult(null); setPickedId('');
   };
+
+  const picked = result?.candidates.find((c) => c.id === pickedId);
 
   return (
     <section className="si-card">
       <div className="si-card-hd">
-        <h2>⟳ GEPA — trace evolution</h2>
-        <span className="si-sub">Reads every past run for one agent, finds recurring failures, and evolves its rule set. Prompt-level — no training.</span>
+        <h2>⟳ GEPA — genetic-Pareto evolution</h2>
+        <span className="si-sub">Hermes-style loop: analyse failures → generate skill variants → judge on success × conciseness → Pareto-select a winner. Prompt-level, no training. You review before it ships.</span>
       </div>
 
       <div className="si-row">
         <label className="fld inline">
           <span className="fld-l">Agent</span>
-          <select className="inp" value={agentId} onChange={(e) => { setAgentId(e.target.value); setPhase('idle'); }}>
+          <select className="inp" value={agentId} onChange={(e) => { setAgentId(e.target.value); setPhase('idle'); setResult(null); }}>
             {trio.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
         <span className="si-meta">{available} run(s) with feedback · {current.length} current rule(s)</span>
         <button className="btn primary sm" disabled={phase === 'running' || available === 0} onClick={run}>
-          {phase === 'running' ? '◈ analysing…' : '⟳ Evolve rules'}
+          {phase === 'running' ? '◈ evolving…' : '⟳ Evolve rules'}
         </button>
       </div>
+
+      {phase === 'running' && <p className="gepa-stage">{stage}</p>}
 
       {available === 0 && phase === 'idle' && (
         <p className="si-empty">Run a task through this agent and leave feedback first — GEPA needs traces to learn from.</p>
       )}
 
-      {phase === 'review' && (
+      {phase === 'review' && result && (
         <div className="gepa-review">
-          <p className="gepa-rationale">⟳ {rationale} <span className="muted">({sampleCount} run(s) analysed)</span></p>
+          <p className="gepa-rationale">◈ {result.analysis} <span className="muted">({result.samples} run(s) analysed · {result.candidates.length} variants)</span></p>
+
+          {/* candidate cards — Pareto front highlighted, winner badged */}
+          <div className="gepa-cands">
+            {result.candidates.map((c) => {
+              const onFront = result.paretoFront.includes(c.id);
+              const isWinner = c.id === result.winnerId;
+              const isPicked = c.id === pickedId;
+              return (
+                <button key={c.id}
+                  className={'gepa-cand' + (isPicked ? ' picked' : '') + (onFront ? ' pareto' : '')}
+                  onClick={() => selectCandidate(result, c.id)}>
+                  <div className="gepa-cand-hd">
+                    <span className="gepa-cand-label">{c.label}</span>
+                    {isWinner && <span className="gepa-badge win">★ winner</span>}
+                    {onFront && !isWinner && <span className="gepa-badge front">Pareto</span>}
+                  </div>
+                  <div className="gepa-cand-strat">{c.strategy}</div>
+                  <div className="gepa-metrics">
+                    <span className="gepa-metric" title="Would these rules prevent the past failures?">
+                      success <b>{c.scores.success}</b>
+                      <i className="gepa-mbar"><i style={{ width: c.scores.success + '%', background: '#2ee6a6' }} /></i>
+                    </span>
+                    <span className="gepa-metric" title="Specific, testable, unambiguous?">
+                      clarity <b>{c.scores.clarity}</b>
+                      <i className="gepa-mbar"><i style={{ width: c.scores.clarity + '%', background: '#5cc8ff' }} /></i>
+                    </span>
+                    <span className="gepa-metric" title="Length penalty — lower is leaner">
+                      bloat <b>{Math.round(c.scores.bloat * 100)}</b>
+                      <i className="gepa-mbar"><i style={{ width: Math.round(c.scores.bloat * 100) + '%', background: '#ff9b4d' }} /></i>
+                    </span>
+                  </div>
+                  <div className="gepa-cand-count">{c.rules.length} rule(s)</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {picked?.scores.rationale && <p className="gepa-judge">⚖ {picked.scores.rationale}</p>}
+
+          {/* before / after for the picked candidate — editable */}
           <div className="gepa-cols">
             <div className="gepa-col">
               <div className="gepa-col-hd">Current ({current.length})</div>
@@ -84,20 +137,21 @@ function GepaPanel() {
             </div>
             <div className="gepa-arrow">→</div>
             <div className="gepa-col">
-              <div className="gepa-col-hd">Proposed ({proposed.length})</div>
-              {proposed.map((text, i) => (
+              <div className="gepa-col-hd">Ship: {picked?.label} ({editRules.length})</div>
+              {editRules.map((text, i) => (
                 <div key={i} className="gepa-new-row">
-                  <textarea className="inp ta gepa-new" rows={2} value={text} onChange={(e) => editProposed(i, e.target.value)} />
-                  <button className="icon-btn" onClick={() => removeProposed(i)} title="Drop">✕</button>
+                  <textarea className="inp ta gepa-new" rows={2} value={text} onChange={(e) => editRule(i, e.target.value)} />
+                  <button className="icon-btn" onClick={() => removeRule(i)} title="Drop">✕</button>
                 </div>
               ))}
-              <button className="btn sm ghost" onClick={addProposed}>＋ add rule</button>
+              <button className="btn sm ghost" onClick={addRule}>＋ add rule</button>
             </div>
           </div>
+
           <div className="gepa-actions">
-            <button className="btn primary sm" onClick={apply}>✓ Apply evolved set to {agent.name}</button>
-            <button className="btn sm" onClick={run}>↺ Regenerate</button>
-            <button className="btn sm ghost" onClick={() => setPhase('idle')}>✕ Discard</button>
+            <button className="btn primary sm" onClick={apply}>✓ Ship {picked?.label} to {agent.name}</button>
+            <button className="btn sm" onClick={run}>↺ Re-evolve</button>
+            <button className="btn sm ghost" onClick={() => { setPhase('idle'); setResult(null); }}>✕ Discard</button>
           </div>
         </div>
       )}

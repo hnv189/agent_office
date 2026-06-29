@@ -349,14 +349,29 @@ The **exact** assembled `system` and `user` are what Phase 3 records into
 - [x] P6 — training-record builder + JSONL download + push (`buildTrainingRecords`, Self-Improve view)
 - [ ] P6.5 — backend `/api/datasets/append` (+ optional `create`) — UI calls it; endpoint still to add server-side
 - [x] P7 — Self-Improve view: train trigger + SSE monitor + reload model
-- [x] GEPA — cross-trace rule evolution (`runGEPA`/`applyGEPA`) — the Hermes-style trace optimiser
+- [x] GEPA — cross-trace rule evolution (`runGEPA`/`applyGEPA`) — single-shot trace optimiser
+- [x] GEPA (Hermes) — full genetic-Pareto loop (`runHermesGEPA`): reflective failure
+      analysis → K skill-variant generation → LLM-as-judge multi-objective scoring
+      (success × clarity, local bloat penalty) → Pareto selection → human review (ships into `rules[]`)
 - [ ] P8 — loop orchestration / retrain nudge / hot-swap
 - [ ] P9 — few-shot bank (optional)
 
-> **Hermes mapping (this branch):** Skill files → `agent.rules[]`; trajectory
-> summariser → Nova diagnosis (P5); GEPA trace analysis → `runGEPA` (Self-Improve
-> view, evolves a whole rule set from many traces, distinct from P5's single-task
-> diagnosis); weight fine-tuning → LoRA adapter (P7 train trigger + merge + reload).
+> **Hermes mapping (this branch):** mirrors `NousResearch/hermes-agent` +
+> `hermes-agent-self-evolution`.
+>
+> | Hermes mechanism | Here |
+> |---|---|
+> | SKILL.md skill files | `agent.rules[]` (locked role prompt + learned rules block, injected at session start via `buildSystemPrompt`) |
+> | Trajectory summariser (after complex tasks) | per-step `task.trace` recorder + Nova diagnosis (P5) |
+> | GEPA reflective failure analysis | `runHermesGEPA` stage 1 — "why it failed" notes from traces |
+> | GEPA targeted mutation (K variants/failure mode) | stage 2 — K diverse skill-set candidates (minimal / comprehensive / refine / merge) |
+> | Multi-objective Pareto evaluation (success × tokens × speed) | stage 3 — LLM-as-judge rubric (success × clarity) + local bloat/length penalty; stage 4 — `paretoFront` selection |
+> | Human PR review before shipping | candidate cards with before/after + scores; nothing applied until the user picks & ships (`applyGEPA`) — never hot-swapped mid-run |
+> | Weight fine-tuning | LoRA adapter (P7 train trigger + merge + reload) |
+>
+> Like Hermes, GEPA here needs as few as 3 examples, optimises **text not
+> weights**, and only the winning variant ships — after human approval, effective
+> on the next run.
 
 ---
 
