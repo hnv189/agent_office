@@ -120,6 +120,19 @@ function taskLooksLikeFileWrite(task) {
     && /\b(file|\.txt|\.md|\.js|\.jsx|\.ts|\.tsx|\.json|\.css|\.html|\.py|\.sh)\b/.test(text);
 }
 
+// Coding/software tasks must always run the V-Model trio (Spec → Forge → Probe),
+// per jd/nova.md — even when they also mention "write the file" (which would
+// otherwise be swallowed by the single-writer file path below).
+function taskLooksLikeCoding(task) {
+  const text = `${task?.title || ''}\n${task?.body || ''}`.toLowerCase();
+  const verbs = /\b(code|coding|program|programme|function|class|method|algorithm|implement|implementation|refactor|debug|unit[\s-]?test|test\s?cases?|gtest|googletest|compile|module|leetcode|data structure)\b/.test(text);
+  const langs = /(\bc\+\+|\bcpp\b|\bc#|\bcsharp\b|\bpython\b|\bjava\b|\bjavascript\b|\btypescript\b|\bgolang\b|\brust\b|\bkotlin\b|\bswift\b|\bruby\b|\bphp\b|\bsql\b)/.test(text);
+  const exts = /\.(cpp|cc|cxx|hpp|hh|c|h|py|js|jsx|ts|tsx|java|go|rs|kt|swift|rb|php|cs|sql)\b/.test(text);
+  return verbs || langs || exts;
+}
+
+const TRIO_PIPELINE = ['req', 'code', 'test']; // Spec → Forge → Probe
+
 function normalizeAgentRef(ref, agents) {
   const raw = String(typeof ref === 'object' ? (ref?.id || ref?.name || '') : ref || '').trim();
   if (!raw) return null;
@@ -139,13 +152,27 @@ function preferredFileWriter(agents) {
 }
 
 function normalizePlan(plan, task, agents) {
-  const fileWriteTask = taskLooksLikeFileWrite(task);
   const pipeline = (plan.pipeline || []).map((id) => normalizeAgentRef(id, agents)).filter(Boolean);
   const patches = (plan.agents || []).map((patch) => {
     const id = normalizeAgentRef(patch, agents);
     return id ? { ...patch, id } : null;
   }).filter(Boolean);
 
+  // Coding tasks ALWAYS go through the locked V-Model trio (Spec → Forge → Probe),
+  // regardless of what the planner returned or whether the task mentions files.
+  if (taskLooksLikeCoding(task)) {
+    const trio = TRIO_PIPELINE.filter((id) => agents.some((a) => a.id === id));
+    if (trio.length === TRIO_PIPELINE.length) {
+      return {
+        ...plan,
+        rationale: 'Coding task — routed through the V-Model trio Spec → Forge → Probe.',
+        pipeline: trio,
+        agents: [], // locked prompts: no per-run overrides
+      };
+    }
+  }
+
+  const fileWriteTask = taskLooksLikeFileWrite(task);
   if (fileWriteTask) {
     const writer = preferredFileWriter(agents);
     if (writer) {
@@ -211,7 +238,10 @@ Return ONLY this JSON object, nothing else:
   ]
 }
 
-Use exact agent ids from AVAILABLE AGENTS in "pipeline" and "agents[].id"; never use display names. For file create/modify/edit tasks, use a single agent with files.write unless the task also asks for review.`;
+Use exact agent ids from AVAILABLE AGENTS in "pipeline" and "agents[].id"; never use display names.
+ROUTING RULES (strict):
+- Any coding/software task (writing/verifying code, tests, algorithms, a .cpp/.py/.js file, etc.) MUST use the V-Model trio in order: ["req","code","test"] (Spec → Forge → Probe). Do not substitute Sol/Clay for these.
+- Only for plain non-code file tasks (e.g. a .md or .txt note) use a single agent with files.write.`;
 
   Store.set((st) => ({ ...st, tasks: st.tasks.map((t) => t.id === taskId ? { ...t, planStatus: 'planning', plan: null, planError: null } : t) }));
   Store.log(`◈ Nova planning "${task.title}"…`, nova.color);
