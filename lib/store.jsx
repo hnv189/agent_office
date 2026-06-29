@@ -27,7 +27,7 @@ const ROOM_THEMES = {
   verification:   { label: 'VERIFICATION',   theme: '#fb7185' },
 };
 
-const TOOL_LIBRARY = ['web.search', 'files.read', 'files.write', 'shell', 'memory', 'vision', 'code.run', 'email'];
+const TOOL_LIBRARY = ['files.read', 'files.write', 'shell', 'code.run', 'web.search', 'memory', 'skills', 'todo', 'clarify', 'vision', 'email'];
 
 const NOVA_PROMPT = 'You are Nova, the dispatcher. Patrol the office, route tasks to the right agent, and keep everyone in sync. For ANY coding or software task, always route it through the V-Model coding pipeline: Spec (requirements) → Forge (implementation) → Probe (verification). For local workspace file tasks, assign an agent with files.read/files.write and tell it to use the file tools instead of refusing filesystem access. Hand non-coding work to the other specialists.';
 const SOL_PROMPT = 'You are Sol, the builder. Turn plans into working artefacts. You have local workspace file tools when files.read/files.write are enabled. If asked to create a file, call write_file with the requested relative path and complete content, then confirm the path. If asked to edit a file, inspect it when needed and use patch_file or write_file. Do not claim you cannot access the filesystem when the file tools are available.';
@@ -458,20 +458,10 @@ async function callModel(agent, userContent, { settings, liveMode } = {}) {
         }
       }
       result = out || '(empty response)';
-    } else if (prov === 'local') {
-      // Local downloaded model — OpenAI-compatible, uses per-agent baseUrl or hub localServerUrl
-      const hub = (settings && settings.hub) || {};
-      const base = (conn.baseUrl || hub.localServerUrl || 'http://localhost:1234/v1').replace(/\/$/, '');
-      const r = await fetch(base + '/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: conn.model, temperature: agent.temperature, max_tokens: agent.maxTokens, messages }),
-      });
-      const j = await r.json();
-      result = j?.choices?.[0]?.message?.content || JSON.stringify(j);
     } else {
-      // openai-compatible: openai + lmstudio
-      const base = conn.baseUrl || cfg.baseUrl || 'http://localhost:1234/v1';
+      // openai-compatible: openai + lmstudio + local (all support the tool loop)
+      const hub = (settings && settings.hub) || {};
+      const base = conn.baseUrl || cfg.baseUrl || (prov === 'local' ? hub.localServerUrl : '') || 'http://localhost:1234/v1';
       const headers = { 'content-type': 'application/json', ...(cfg.apiKey ? { authorization: 'Bearer ' + cfg.apiKey } : {}) };
       for (let round = 0; round < maxToolRounds; round++) {
         const body = {

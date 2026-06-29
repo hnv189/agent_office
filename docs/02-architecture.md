@@ -82,13 +82,30 @@ MCP clients. Real file tools therefore go through the local Node server in
 `.claude/serve.js`. When launched with `node .claude/serve.js`, it serves the app
 and exposes `POST /api/tools/call` plus `GET /api/tools/status`.
 
-`lib/tools.jsx` maps an agent's tool chips to OpenAI-compatible function schemas:
-agents with `files.read` get `list_dir`, `read_file`, and `search_files`; agents
-with `files.write` get `write_file` and `patch_file`. `callModel()` sends those
-schemas to LM Studio/OpenAI-compatible providers and loops over returned
-`tool_calls`, appending `role:"tool"` results until the model produces final text.
+`lib/tools.jsx` maps an agent's tool chips (capability labels) to
+OpenAI-compatible function schemas via `CAP_TOOLS`. The catalog mirrors the core
+general-purpose tools of Nous Research's Hermes Agent:
 
-All bridge file paths are scoped to this repository's workspace root.
+| Capability chip | Tools unlocked |
+|---|---|
+| `files.read`  | `list_dir`, `read_file`, `search_files` |
+| `files.write` | `write_file`, `patch_file` |
+| `shell`       | `run_terminal` (bash, 30s timeout, workspace-scoped) |
+| `code.run`    | `execute_code` (python / javascript / bash) |
+| `web.search`  | `web_search` (DuckDuckGo), `web_fetch` (URL → readable text) |
+| `memory`      | `memory_write`, `memory_search` (persisted to `.agent/memory.json`) |
+| `skills`      | `skill_create`, `skill_list`, `skill_read` (Hermes SKILL.md in `.agent/skills/`) |
+| `todo`        | `todo_write`, `todo_read` (`.agent/todo.json`) |
+| `clarify`     | `clarify` (ask the user a question) |
+| `vision`      | `vision_analyze`, `image_generate` (best-effort; need a backend via env) |
+
+`callModel()` sends the schemas to any OpenAI-compatible provider (lmstudio /
+openai / local) and loops over returned `tool_calls`, appending `role:"tool"`
+results until the model produces final text (capped by `settings.tools.maxRounds`).
+
+All bridge file paths are scoped to this repository's workspace root; agent state
+(memory, skills, todo) lives under `.agent/` (git-ignored). Vision/image tools
+return a clear "not configured" result unless their env vars are set.
 
 ## Transient vs persisted state
 

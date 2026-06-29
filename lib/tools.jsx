@@ -1,9 +1,13 @@
 // tools.jsx — browser-side tool schemas + dispatch to the local Tool Bridge.
-// Exports: TOOL_BRIDGE_DEFAULT, getAgentToolSchemas, executeAgentTool.
+// Catalog mirrors the core general-purpose tools of Nous Research's Hermes
+// Agent (file, terminal, code, web, memory, skills, todo, clarify, vision),
+// grouped under coarse capability labels the user toggles per agent.
+// Exports: TOOL_BRIDGE_DEFAULT, TOOL_SCHEMAS, CAP_TOOLS, getAgentToolSchemas, executeAgentTool.
 
 const TOOL_BRIDGE_DEFAULT = 'http://localhost:4173';
 
 const TOOL_SCHEMAS = {
+  // ── File (capability: files.read / files.write) ───────────────────────────
   list_dir: {
     name: 'list_dir',
     description: 'List files and folders inside the configured local workspace. Use before reading unknown paths.',
@@ -69,6 +73,198 @@ const TOOL_SCHEMAS = {
       required: ['path', 'old_string', 'new_string'],
     },
   },
+
+  // ── Terminal (capability: shell) ──────────────────────────────────────────
+  run_terminal: {
+    name: 'run_terminal',
+    description: 'Run a shell command in the local workspace and return its stdout, stderr and exit code. Commands time out after ~30s.',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The shell command to execute.' },
+        cwd: { type: 'string', description: 'Working directory relative to the workspace root.', default: '.' },
+        timeout_ms: { type: 'integer', description: 'Timeout in milliseconds.', default: 30000, minimum: 1000, maximum: 120000 },
+      },
+      required: ['command'],
+    },
+  },
+
+  // ── Code execution (capability: code.run) ─────────────────────────────────
+  execute_code: {
+    name: 'execute_code',
+    description: 'Execute a snippet of Python, JavaScript or Bash and return its output. Use for calculations, data transforms, and quick checks.',
+    parameters: {
+      type: 'object',
+      properties: {
+        language: { type: 'string', enum: ['python', 'javascript', 'bash'], description: 'Language of the snippet.', default: 'python' },
+        code: { type: 'string', description: 'Source code to run.' },
+        timeout_ms: { type: 'integer', description: 'Timeout in milliseconds.', default: 30000, minimum: 1000, maximum: 120000 },
+      },
+      required: ['code'],
+    },
+  },
+
+  // ── Web (capability: web.search) ──────────────────────────────────────────
+  web_search: {
+    name: 'web_search',
+    description: 'Search the web and return a list of result titles, URLs and snippets.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query.' },
+        limit: { type: 'integer', description: 'Maximum number of results.', default: 6, minimum: 1, maximum: 15 },
+      },
+      required: ['query'],
+    },
+  },
+  web_fetch: {
+    name: 'web_fetch',
+    description: 'Fetch a URL and return its readable text content (HTML stripped). Use after web_search to read a page.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The absolute http(s) URL to fetch.' },
+        max_chars: { type: 'integer', description: 'Maximum characters of text to return.', default: 6000, minimum: 200, maximum: 40000 },
+      },
+      required: ['url'],
+    },
+  },
+
+  // ── Memory (capability: memory) ───────────────────────────────────────────
+  memory_write: {
+    name: 'memory_write',
+    description: 'Persist a durable memory (a fact, preference or learning) so it can be recalled in future runs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The memory content to store.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for later retrieval.' },
+      },
+      required: ['text'],
+    },
+  },
+  memory_search: {
+    name: 'memory_search',
+    description: 'Search previously stored memories by keyword or tag. Returns matching entries newest-first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keyword or tag to match. Empty returns the most recent memories.', default: '' },
+        limit: { type: 'integer', description: 'Maximum entries to return.', default: 10, minimum: 1, maximum: 50 },
+      },
+    },
+  },
+
+  // ── Skills (capability: skills) — Hermes SKILL.md files ───────────────────
+  skill_create: {
+    name: 'skill_create',
+    description: 'Create or overwrite a reusable skill as a SKILL.md file (procedural instructions for a recurring task).',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Skill name (kebab-case). Becomes the file name.' },
+        description: { type: 'string', description: 'One-line summary of when to use this skill.' },
+        body: { type: 'string', description: 'Markdown body: the step-by-step procedure.' },
+      },
+      required: ['name', 'body'],
+    },
+  },
+  skill_list: {
+    name: 'skill_list',
+    description: 'List available skills with their names and descriptions.',
+    parameters: { type: 'object', properties: {} },
+  },
+  skill_read: {
+    name: 'skill_read',
+    description: 'Read the full content of a named skill before following it.',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Skill name to read.' } },
+      required: ['name'],
+    },
+  },
+
+  // ── Todo (capability: todo) ───────────────────────────────────────────────
+  todo_write: {
+    name: 'todo_write',
+    description: 'Replace the working todo list for the current task. Use to plan and track multi-step work.',
+    parameters: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          description: 'The full ordered list of todo items.',
+          items: {
+            type: 'object',
+            properties: {
+              content: { type: 'string', description: 'What needs to be done.' },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'done'], default: 'pending' },
+            },
+            required: ['content'],
+          },
+        },
+      },
+      required: ['items'],
+    },
+  },
+  todo_read: {
+    name: 'todo_read',
+    description: 'Read the current todo list and each item\'s status.',
+    parameters: { type: 'object', properties: {} },
+  },
+
+  // ── Clarify (capability: clarify) ─────────────────────────────────────────
+  clarify: {
+    name: 'clarify',
+    description: 'Ask the user a clarifying question when the task is ambiguous. Returns the question for the user to answer.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'The specific question to ask the user.' },
+      },
+      required: ['question'],
+    },
+  },
+
+  // ── Vision / media (capability: vision) ───────────────────────────────────
+  vision_analyze: {
+    name: 'vision_analyze',
+    description: 'Analyse an image (by URL or workspace path) and answer a question about it. Requires a vision backend configured on the Tool Bridge.',
+    parameters: {
+      type: 'object',
+      properties: {
+        image: { type: 'string', description: 'Image URL or workspace-relative path.' },
+        prompt: { type: 'string', description: 'What to look for or describe.', default: 'Describe this image.' },
+      },
+      required: ['image'],
+    },
+  },
+  image_generate: {
+    name: 'image_generate',
+    description: 'Generate an image from a text prompt and save it to the workspace. Requires an image backend configured on the Tool Bridge.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Text description of the image to generate.' },
+        path: { type: 'string', description: 'Workspace-relative output path (e.g. "out/image.png").', default: 'generated.png' },
+      },
+      required: ['prompt'],
+    },
+  },
+};
+
+// capability label (editor chip) → tool names it unlocks
+const CAP_TOOLS = {
+  'files.read':  ['list_dir', 'read_file', 'search_files'],
+  'files.write': ['write_file', 'patch_file'],
+  'shell':       ['run_terminal'],
+  'code.run':    ['execute_code'],
+  'web.search':  ['web_search', 'web_fetch'],
+  'memory':      ['memory_write', 'memory_search'],
+  'skills':      ['skill_create', 'skill_list', 'skill_read'],
+  'todo':        ['todo_write', 'todo_read'],
+  'clarify':     ['clarify'],
+  'vision':      ['vision_analyze', 'image_generate'],
 };
 
 function __toolSchema(name) {
@@ -79,8 +275,11 @@ function __toolSchema(name) {
 function getAgentToolSchemas(agent) {
   const labels = new Set(agent?.tools || []);
   const names = [];
-  if (labels.has('files.read')) names.push('list_dir', 'read_file', 'search_files');
-  if (labels.has('files.write')) names.push('write_file', 'patch_file');
+  for (const label of labels) {
+    for (const t of (CAP_TOOLS[label] || [])) {
+      if (!names.includes(t)) names.push(t);
+    }
+  }
   return names.map(__toolSchema).filter(Boolean);
 }
 
@@ -104,4 +303,4 @@ async function executeAgentTool(name, args = {}, { settings } = {}) {
   }
 }
 
-Object.assign(window, { TOOL_BRIDGE_DEFAULT, getAgentToolSchemas, executeAgentTool });
+Object.assign(window, { TOOL_BRIDGE_DEFAULT, TOOL_SCHEMAS, CAP_TOOLS, getAgentToolSchemas, executeAgentTool });
